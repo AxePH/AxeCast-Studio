@@ -1,0 +1,239 @@
+name: Build & Release AxeCast Studio
+
+# ============================================================
+# Triggers:
+#   1. Push a version tag like v1.0.0 -> auto-build all 3 OS
+#   2. Manual trigger from GitHub Actions UI (workflow_dispatch)
+# ============================================================
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.0.0)'
+        required: true
+        default: 'v0.0.1-dev'
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: AxeCast-Studio
+
+jobs:
+  # ──────────────────────────────────────────────
+  # Build on Windows
+  # ──────────────────────────────────────────────
+  build-windows:
+    name: "🪟 Build Windows"
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install nuitka ordered-set zstandard
+
+      - name: Build with Nuitka (Windows)
+        run: >
+          python -m nuitka
+          --standalone
+          --onefile
+          --windows-disable-console
+          --enable-plugin=tk-inter
+          --include-data-dir=bin=bin
+          --include-data-dir=assets=assets
+          --include-data-dir=core=core
+          --include-data-dir=ui=ui
+          --include-data-files=axecast_stream.apk=axecast_stream.apk
+          --include-data-files=requirements.txt=requirements.txt
+          --windows-icon-from-ico=assets/icon.ico
+          --output-filename=AxeCast-Studio.exe
+          --output-dir=release
+          app.py
+
+      - name: Package Windows release
+        run: |
+          mkdir release\package
+          copy release\AxeCast-Studio.exe release\package\
+          copy README.md release\package\
+          copy assets\icon.ico release\package\
+          xcopy bin release\package\bin\ /E /I /Q
+          copy axecast_stream.apk release\package\
+          cd release\package
+          powershell Compress-Archive -Path * -DestinationPath ..\AxeCast-Studio-Windows-x64.zip
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AxeCast-Studio-Windows-x64
+          path: release/AxeCast-Studio-Windows-x64.zip
+
+  # ──────────────────────────────────────────────
+  # Build on macOS
+  # ──────────────────────────────────────────────
+  build-macos:
+    name: "🍎 Build macOS"
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install nuitka ordered-set zstandard
+
+      - name: Build with Nuitka (macOS)
+        run: >
+          python -m nuitka
+          --standalone
+          --macos-create-app-bundle
+          --enable-plugin=tk-inter
+          --include-data-dir=core=core
+          --include-data-dir=ui=ui
+          --include-data-dir=assets=assets
+          --include-data-files=axecast_stream.apk=axecast_stream.apk
+          --include-data-files=requirements.txt=requirements.txt
+          --macos-app-icon=assets/icon.png
+          --output-filename=AxeCast-Studio
+          --output-dir=release
+          app.py
+
+      - name: Package macOS release
+        run: |
+          cd release
+          mkdir -p dmg_content
+          cp -R app.dist/AxeCast-Studio.app dmg_content/ 2>/dev/null || cp -R *.app dmg_content/ 2>/dev/null || true
+          cp ../README.md dmg_content/
+          cp ../axecast_stream.apk dmg_content/
+          tar -czf AxeCast-Studio-macOS-arm64.tar.gz -C dmg_content .
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AxeCast-Studio-macOS-arm64
+          path: release/AxeCast-Studio-macOS-arm64.tar.gz
+
+  # ──────────────────────────────────────────────
+  # Build on Linux
+  # ──────────────────────────────────────────────
+  build-linux:
+    name: "🐧 Build Linux"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk patchelf
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install nuitka ordered-set zstandard
+
+      - name: Build with Nuitka (Linux)
+        run: >
+          python -m nuitka
+          --standalone
+          --onefile
+          --enable-plugin=tk-inter
+          --include-data-dir=core=core
+          --include-data-dir=ui=ui
+          --include-data-dir=assets=assets
+          --include-data-files=axecast_stream.apk=axecast_stream.apk
+          --include-data-files=requirements.txt=requirements.txt
+          --linux-icon=assets/icon.png
+          --output-filename=AxeCast-Studio
+          --output-dir=release
+          app.py
+
+      - name: Package Linux release
+        run: |
+          mkdir -p release/package
+          cp release/AxeCast-Studio release/package/
+          cp README.md release/package/
+          cp axecast_stream.apk release/package/
+          cp run.sh release/package/
+          chmod +x release/package/AxeCast-Studio
+          chmod +x release/package/run.sh
+          cd release/package
+          tar -czf ../AxeCast-Studio-Linux-x64.tar.gz .
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AxeCast-Studio-Linux-x64
+          path: release/AxeCast-Studio-Linux-x64.tar.gz
+
+  # ──────────────────────────────────────────────
+  # Publish GitHub Release (all 3 platforms)
+  # ──────────────────────────────────────────────
+  release:
+    name: "📦 Publish Release"
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "AxeCast Studio ${{ github.ref_name }}"
+          body: |
+            ## 🪓 AxeCast Studio ${{ github.ref_name }}
+
+            ### Downloads
+
+            | Platform | File | How to Use |
+            |----------|------|------------|
+            | 🪟 **Windows** (x64) | `AxeCast-Studio-Windows-x64.zip` | Extract and run `AxeCast-Studio.exe` |
+            | 🍎 **macOS** (ARM64) | `AxeCast-Studio-macOS-arm64.tar.gz` | Extract and open `AxeCast-Studio.app` |
+            | 🐧 **Linux** (x64) | `AxeCast-Studio-Linux-x64.tar.gz` | Extract and run `./AxeCast-Studio` |
+            | 📲 **Android APK** | `axecast_stream.apk` | Companion app for wireless streaming |
+
+            ### What is Included
+            - Compiled native binary (source code is NOT included - fully protected)
+            - Bundled ADB and Scrcpy runtime engines (Windows build)
+            - AxeSQL Studio, Logcat Studio, File Explorer, Multi-Device Mirroring
+            - Companion APK for wireless screen casting without Developer Options
+
+          files: |
+            artifacts/AxeCast-Studio-Windows-x64/AxeCast-Studio-Windows-x64.zip
+            artifacts/AxeCast-Studio-macOS-arm64/AxeCast-Studio-macOS-arm64.tar.gz
+            artifacts/AxeCast-Studio-Linux-x64/AxeCast-Studio-Linux-x64.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=AxeCast Studio
+Comment=Mobile Screen Mirror & Multi-Screen Management
+Exec=bash -c 'cd "$(dirname "%k")" && python3 app.py'
+Icon=assets/icon.png
+Terminal=false
+Type=Application
+Categories=Utility;Development;

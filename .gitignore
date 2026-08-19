@@ -1,0 +1,32 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*.class
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# PyInstaller / Build artifacts (Too large for git, use GitHub Releases instead)
+build/
+dist/
+*.spec
+
+# User capture outputs (Screenshots & recordings)
+captures/
+*.mp4
+*.mkv
+
+# Temporary test logs & debug caches
+debug_launch.log
+*.tmp
+*.log
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

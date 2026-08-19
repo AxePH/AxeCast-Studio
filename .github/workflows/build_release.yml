@@ -2,7 +2,7 @@ name: Build & Release AxeCast Studio
 
 # ============================================================
 # Triggers:
-#   1. Push a version tag like v1.0.0 -> auto-build all 3 OS
+#   1. Push to main branch or version tags (v*)
 #   2. Manual trigger from GitHub Actions UI (workflow_dispatch)
 # ============================================================
 on:
@@ -51,30 +51,27 @@ jobs:
         run: >
           python -m nuitka
           --standalone
-          --onefile
+          --assume-yes-for-downloads
           --windows-disable-console
           --enable-plugin=tk-inter
+          --include-package-data=customtkinter
           --include-data-dir=bin=bin
           --include-data-dir=assets=assets
           --include-data-dir=core=core
           --include-data-dir=ui=ui
           --include-data-files=axecast_stream.apk=axecast_stream.apk
-          --include-data-files=requirements.txt=requirements.txt
           --windows-icon-from-ico=assets/icon.ico
-          --output-filename=AxeCast-Studio.exe
           --output-dir=release
           app.py
 
       - name: Package Windows release
         run: |
-          mkdir release\package
-          copy release\AxeCast-Studio.exe release\package\
-          copy README.md release\package\
-          copy assets\icon.ico release\package\
-          xcopy bin release\package\bin\ /E /I /Q
-          copy axecast_stream.apk release\package\
-          cd release\package
-          powershell Compress-Archive -Path * -DestinationPath ..\AxeCast-Studio-Windows-x64.zip
+          powershell -Command "
+            Rename-Item -Path 'release\app.dist' -NewName 'AxeCast-Studio'
+            Copy-Item -Path 'README.md' -Destination 'release\AxeCast-Studio\'
+            Copy-Item -Path 'axecast_stream.apk' -Destination 'release\AxeCast-Studio\'
+            Compress-Archive -Path 'release\AxeCast-Studio' -DestinationPath 'release\AxeCast-Studio-Windows-x64.zip'
+          "
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -108,26 +105,26 @@ jobs:
         run: >
           python -m nuitka
           --standalone
+          --assume-yes-for-downloads
           --macos-create-app-bundle
           --macos-app-name=AxeCast-Studio
           --macos-app-icon=assets/icon.png
           --enable-plugin=tk-inter
+          --include-package-data=customtkinter
           --include-data-dir=core=core
           --include-data-dir=ui=ui
           --include-data-dir=assets=assets
           --include-data-files=axecast_stream.apk=axecast_stream.apk
-          --include-data-files=requirements.txt=requirements.txt
           --output-dir=release
           app.py
 
       - name: Package macOS release
         run: |
-          cd release
-          mkdir -p dmg_content
-          cp -R *.app dmg_content/ 2>/dev/null || cp -R app.dist/*.app dmg_content/ 2>/dev/null || true
-          cp ../README.md dmg_content/
-          cp ../axecast_stream.apk dmg_content/
-          tar -czf AxeCast-Studio-macOS-arm64.tar.gz -C dmg_content .
+          mkdir -p release/pkg
+          cp -R release/AxeCast-Studio.app release/pkg/ 2>/dev/null || cp -R release/*.app release/pkg/ 2>/dev/null || true
+          cp README.md release/pkg/
+          cp axecast_stream.apk release/pkg/
+          tar -czf release/AxeCast-Studio-macOS-arm64.tar.gz -C release/pkg .
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -166,29 +163,26 @@ jobs:
         run: >
           python -m nuitka
           --standalone
-          --onefile
+          --assume-yes-for-downloads
           --enable-plugin=tk-inter
+          --include-package-data=customtkinter
           --include-data-dir=core=core
           --include-data-dir=ui=ui
           --include-data-dir=assets=assets
           --include-data-files=axecast_stream.apk=axecast_stream.apk
-          --include-data-files=requirements.txt=requirements.txt
           --linux-icon=assets/icon.png
-          --output-filename=AxeCast-Studio
           --output-dir=release
           app.py
 
       - name: Package Linux release
         run: |
-          mkdir -p release/package
-          cp release/AxeCast-Studio release/package/
-          cp README.md release/package/
-          cp axecast_stream.apk release/package/
-          cp run.sh release/package/
-          chmod +x release/package/AxeCast-Studio
-          chmod +x release/package/run.sh
-          cd release/package
-          tar -czf ../AxeCast-Studio-Linux-x64.tar.gz .
+          mv release/app.dist release/AxeCast-Studio
+          cp README.md release/AxeCast-Studio/
+          cp axecast_stream.apk release/AxeCast-Studio/
+          cp run.sh release/AxeCast-Studio/
+          chmod +x release/AxeCast-Studio/app.bin 2>/dev/null || chmod +x release/AxeCast-Studio/app 2>/dev/null || true
+          chmod +x release/AxeCast-Studio/run.sh
+          tar -czf release/AxeCast-Studio-Linux-x64.tar.gz -C release AxeCast-Studio
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
@@ -203,9 +197,12 @@ jobs:
     name: "📦 Publish Release"
     needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
@@ -214,28 +211,33 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "AxeCast Studio ${{ github.ref_name }}"
+          tag_name: "v1.0.0"
+          name: "AxeCast Studio v1.0.0"
           body: |
-            ## 🪓 AxeCast Studio ${{ github.ref_name }}
+            ## 🪓 AxeCast Studio v1.0.0
 
-            ### Downloads
+            ### 📥 Downloads
 
             | Platform | File | How to Use |
             |----------|------|------------|
             | 🪟 **Windows** (x64) | `AxeCast-Studio-Windows-x64.zip` | Extract and run `AxeCast-Studio.exe` |
             | 🍎 **macOS** (ARM64) | `AxeCast-Studio-macOS-arm64.tar.gz` | Extract and open `AxeCast-Studio.app` |
-            | 🐧 **Linux** (x64) | `AxeCast-Studio-Linux-x64.tar.gz` | Extract and run `./AxeCast-Studio` |
+            | 🐧 **Linux** (x64) | `AxeCast-Studio-Linux-x64.tar.gz` | Extract and run `./run.sh` |
             | 📲 **Android APK** | `axecast_stream.apk` | Companion app for wireless streaming |
 
-            ### What is Included
-            - Compiled native binary (source code is NOT included - fully protected)
-            - Bundled ADB and Scrcpy runtime engines (Windows build)
-            - AxeSQL Studio, Logcat Studio, File Explorer, Multi-Device Mirroring
-            - Companion APK for wireless screen casting without Developer Options
+            ### 🌟 Key Features
+            - **60 FPS Hardware-Accelerated Mirroring** with multi-device controls
+            - **AxeSQL Studio 🪓** native SQLite database manager
+            - **Live Performance Dashboard** (CPU, GPU, RAM rolling Canvas charts)
+            - **Simultaneous Multi-Drawer Panels** (File Explorer + Performance Graphs)
+            - **Android Emulator Auto-Discovery** (LDPlayer, BlueStacks, Nox, MEmu, WSA)
+            - **Smart GitHub Auto-Update Checker**
+            - **Compiled Native Binaries** with hidden source code and zero console popups
 
           files: |
             artifacts/AxeCast-Studio-Windows-x64/AxeCast-Studio-Windows-x64.zip
             artifacts/AxeCast-Studio-macOS-arm64/AxeCast-Studio-macOS-arm64.tar.gz
             artifacts/AxeCast-Studio-Linux-x64/AxeCast-Studio-Linux-x64.tar.gz
+            axecast_stream.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

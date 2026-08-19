@@ -62,36 +62,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install nuitka ordered-set zstandard
+          pip install pyinstaller
 
-      - name: Build with Nuitka (Windows)
-        run: >
-          python -m nuitka
-          --standalone
-          --assume-yes-for-downloads
-          --windows-disable-console
-          --enable-plugin=tk-inter
-          --include-package-data=customtkinter
-          --include-data-dir=bin=bin
-          --include-data-dir=assets=assets
-          --include-data-files=axecast_stream.apk=axecast_stream.apk
-          --windows-icon-from-ico=assets/icon.ico
-          --output-dir=release
-          app.py
+      - name: Build with PyInstaller (Windows)
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --windowed `
+            --name "AxeCast-Studio" `
+            --icon "assets/icon.ico" `
+            --add-data "assets;assets" `
+            --add-data "bin;bin" `
+            --add-data "axecast_stream.apk;." `
+            --collect-all customtkinter `
+            --collect-all tkinterdnd2 `
+            --collect-all windnd `
+            --distpath release `
+            app.py
 
       - name: Package Windows release
         run: |
-          powershell -Command "
-            Rename-Item -Path 'release\app.dist' -NewName 'AxeCast-Studio'
-            Copy-Item -Path 'README.md' -Destination 'release\AxeCast-Studio\'
-            Copy-Item -Path 'axecast_stream.apk' -Destination 'release\AxeCast-Studio\'
-          "
+          Copy-Item README.md release\AxeCast-Studio\
+          Copy-Item axecast_stream.apk release\AxeCast-Studio\
+          Compress-Archive -Path release\AxeCast-Studio -DestinationPath release\AxeCast-Studio-Windows-x64.zip -Force
 
-      - name: Upload Windows artifact
+      - name: Upload Windows archive artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AxeCast-Studio-Windows-x64
-          path: release/AxeCast-Studio/
+          name: AxeCast-Studio-Windows-x64-zip
+          path: release/AxeCast-Studio-Windows-x64.zip
 
   # ──────────────────────────────────────────────
   # Build on macOS
@@ -116,21 +115,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Tcl/Tk system dependencies
-        run: |
-          brew install tcl-tk@8 python-tk@3.11
-          echo "TCL_ROOT=$(brew --prefix tcl-tk@8)" >> $GITHUB_ENV
-          echo "$(brew --prefix tcl-tk@8)/bin" >> $GITHUB_PATH
-
-      - name: Verify tkinter
-        run: |
-          python -c "import tkinter; print('tkinter OK:', tkinter.TkVersion)"
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install nuitka ordered-set zstandard
+          pip install pyinstaller
 
       - name: Generate macOS ICNS icon
         run: |
@@ -146,46 +135,48 @@ jobs:
           sips -z 512 512   assets/icon.png --out assets/AppIcon.iconset/icon_512x512.png
           sips -z 1024 1024 assets/icon.png --out assets/AppIcon.iconset/icon_512x512@2x.png
           iconutil -c icns assets/AppIcon.iconset -o assets/icon.icns
+          # Clean up temporary iconset to prevent codesign subcomponent failure
+          rm -rf assets/AppIcon.iconset
 
-      - name: Build with Nuitka (macOS)
-        env:
-          TCL_LIBRARY: ${{ env.TCL_ROOT }}/lib/tcl8.6
-          TK_LIBRARY: ${{ env.TCL_ROOT }}/lib/tk8.6
-        run: >
-          python -m nuitka
-          --standalone
-          --assume-yes-for-downloads
-          --macos-create-app-bundle
-          --macos-app-name=AxeCast-Studio
-          --macos-app-icon=assets/icon.icns
-          --enable-plugin=tk-inter
-          --include-package-data=customtkinter
-          --include-data-dir=assets=assets
-          --include-data-files=axecast_stream.apk=axecast_stream.apk
-          --output-dir=release
-          app.py
-
-      - name: Package macOS release
+      - name: Build with PyInstaller (macOS)
         run: |
-          mkdir -p release/AxeCast-Studio-macOS
-          # Rename app.app to AxeCast-Studio.app if needed
-          if [ -d "release/app.app" ]; then
-            mv release/app.app release/AxeCast-Studio.app
-          fi
-          # Ensure executable permissions on all binaries inside the app bundle
-          chmod -R +x release/AxeCast-Studio.app/Contents/MacOS/ 2>/dev/null || true
-          # Apply ad-hoc codesign for macOS ARM64 security requirements
-          codesign --force --deep --sign - release/AxeCast-Studio.app 2>/dev/null || true
+          pyinstaller \
+            --noconfirm \
+            --windowed \
+            --name "AxeCast-Studio" \
+            --icon "assets/icon.icns" \
+            --add-data "assets:assets" \
+            --add-data "axecast_stream.apk:." \
+            --collect-all customtkinter \
+            --collect-all tkinterdnd2 \
+            --distpath release \
+            app.py
 
+      - name: Package & Sign macOS release
+        run: |
+          # Apply ad-hoc codesign for macOS Apple Silicon / Intel
+          codesign --force --deep --sign - release/AxeCast-Studio.app
+
+          mkdir -p release/AxeCast-Studio-macOS
           cp -R release/AxeCast-Studio.app release/AxeCast-Studio-macOS/
           cp README.md release/AxeCast-Studio-macOS/
           cp axecast_stream.apk release/AxeCast-Studio-macOS/
 
-      - name: Upload macOS artifact
+          # Package directly on macOS runner to preserve full POSIX executable permissions
+          tar -czf release/AxeCast-Studio-macOS-arm64.tar.gz -C release/AxeCast-Studio-macOS .
+          ditto -c -k --keepParent release/AxeCast-Studio-macOS release/AxeCast-Studio-macOS-arm64.zip
+
+      - name: Upload macOS tar.gz artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AxeCast-Studio-macOS-arm64
-          path: release/AxeCast-Studio-macOS/
+          name: AxeCast-Studio-macOS-arm64-tar
+          path: release/AxeCast-Studio-macOS-arm64.tar.gz
+
+      - name: Upload macOS zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AxeCast-Studio-macOS-arm64-zip
+          path: release/AxeCast-Studio-macOS-arm64.zip
 
   # ──────────────────────────────────────────────
   # Build on Linux
@@ -208,7 +199,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y python3-tk patchelf
+          sudo apt-get install -y python3-tk
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -219,35 +210,34 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install nuitka ordered-set zstandard
+          pip install pyinstaller
 
-      - name: Build with Nuitka (Linux)
-        run: >
-          python -m nuitka
-          --standalone
-          --assume-yes-for-downloads
-          --enable-plugin=tk-inter
-          --include-package-data=customtkinter
-          --include-data-dir=assets=assets
-          --include-data-files=axecast_stream.apk=axecast_stream.apk
-          --linux-icon=assets/icon.png
-          --output-dir=release
-          app.py
+      - name: Build with PyInstaller (Linux)
+        run: |
+          pyinstaller \
+            --noconfirm \
+            --name "AxeCast-Studio" \
+            --add-data "assets:assets" \
+            --add-data "axecast_stream.apk:." \
+            --collect-all customtkinter \
+            --collect-all tkinterdnd2 \
+            --distpath release \
+            app.py
 
       - name: Package Linux release
         run: |
-          mv release/app.dist release/AxeCast-Studio
           cp README.md release/AxeCast-Studio/
           cp axecast_stream.apk release/AxeCast-Studio/
           cp run.sh release/AxeCast-Studio/
-          chmod +x release/AxeCast-Studio/app.bin 2>/dev/null || chmod +x release/AxeCast-Studio/app 2>/dev/null || true
+          chmod +x release/AxeCast-Studio/AxeCast-Studio
           chmod +x release/AxeCast-Studio/run.sh
+          tar -czf release/AxeCast-Studio-Linux-x64.tar.gz -C release/AxeCast-Studio .
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AxeCast-Studio-Linux-x64
-          path: release/AxeCast-Studio/
+          name: AxeCast-Studio-Linux-x64-tar
+          path: release/AxeCast-Studio-Linux-x64.tar.gz
 
   # ──────────────────────────────────────────────
   # Publish GitHub Release (all 3 platforms)
@@ -266,17 +256,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download all build artifacts
+      - name: Download Windows artifact
         uses: actions/download-artifact@v4
+        continue-on-error: true
         with:
-          path: artifacts
+          name: AxeCast-Studio-Windows-x64-zip
+          path: release-files
 
-      - name: Package release archives
-        run: |
-          cd artifacts
-          [ -d "AxeCast-Studio-Windows-x64" ] && zip -r AxeCast-Studio-Windows-x64.zip AxeCast-Studio-Windows-x64/ || true
-          [ -d "AxeCast-Studio-macOS-arm64" ] && tar -czf AxeCast-Studio-macOS-arm64.tar.gz -C AxeCast-Studio-macOS-arm64 . || true
-          [ -d "AxeCast-Studio-Linux-x64" ] && tar -czf AxeCast-Studio-Linux-x64.tar.gz -C AxeCast-Studio-Linux-x64 . || true
+      - name: Download macOS tar artifact
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: AxeCast-Studio-macOS-arm64-tar
+          path: release-files
+
+      - name: Download macOS zip artifact
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: AxeCast-Studio-macOS-arm64-zip
+          path: release-files
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: AxeCast-Studio-Linux-x64-tar
+          path: release-files
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -291,7 +297,7 @@ jobs:
             | Platform | File | How to Use |
             |----------|------|------------|
             | 🪟 **Windows** (x64) | `AxeCast-Studio-Windows-x64.zip` | Extract and run `AxeCast-Studio.exe` |
-            | 🍎 **macOS** (ARM64) | `AxeCast-Studio-macOS-arm64.tar.gz` | Extract and open `AxeCast-Studio.app` |
+            | 🍎 **macOS** (ARM64) | `AxeCast-Studio-macOS-arm64.zip` / `.tar.gz` | Extract and open `AxeCast-Studio.app` |
             | 🐧 **Linux** (x64) | `AxeCast-Studio-Linux-x64.tar.gz` | Extract and run `./run.sh` |
             | 📲 **Android APK** | `axecast_stream.apk` | Companion app for wireless streaming |
 
@@ -302,12 +308,16 @@ jobs:
             - **Simultaneous Multi-Drawer Panels** (File Explorer + Performance Graphs)
             - **Android Emulator Auto-Discovery** (LDPlayer, BlueStacks, Nox, MEmu, WSA)
             - **Smart GitHub Auto-Update Checker**
-            - **Compiled Native Binaries** with hidden source code and zero console popups
+            - **Native Packaged Binaries** with self-contained dependencies
+
+            > **🍎 หมายเหตุสำหรับผู้ใช้ macOS:**
+            > หากเปิดครั้งแรกแล้วระบบขึ้นเตือนความปลอดภัย (Gatekeeper):
+            > - คลิกขวาที่ `AxeCast-Studio.app` -> เลือก **Open (เปิด)** -> กด **Open**
+            > - หรือเปิด Terminal แล้วพิมพ์: `xattr -cr AxeCast-Studio.app`
 
           files: |
-            artifacts/AxeCast-Studio-Windows-x64.zip
-            artifacts/AxeCast-Studio-macOS-arm64.tar.gz
-            artifacts/AxeCast-Studio-Linux-x64.tar.gz
+            release-files/*
             axecast_stream.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

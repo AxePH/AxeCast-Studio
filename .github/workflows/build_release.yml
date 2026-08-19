@@ -57,8 +57,6 @@ jobs:
           --include-package-data=customtkinter
           --include-data-dir=bin=bin
           --include-data-dir=assets=assets
-          --include-data-dir=core=core
-          --include-data-dir=ui=ui
           --include-data-files=axecast_stream.apk=axecast_stream.apk
           --windows-icon-from-ico=assets/icon.ico
           --output-dir=release
@@ -111,8 +109,6 @@ jobs:
           --macos-app-icon=assets/icon.png
           --enable-plugin=tk-inter
           --include-package-data=customtkinter
-          --include-data-dir=core=core
-          --include-data-dir=ui=ui
           --include-data-dir=assets=assets
           --include-data-files=axecast_stream.apk=axecast_stream.apk
           --output-dir=release
@@ -166,8 +162,6 @@ jobs:
           --assume-yes-for-downloads
           --enable-plugin=tk-inter
           --include-package-data=customtkinter
-          --include-data-dir=core=core
-          --include-data-dir=ui=ui
           --include-data-dir=assets=assets
           --include-data-files=axecast_stream.apk=axecast_stream.apk
           --linux-icon=assets/icon.png

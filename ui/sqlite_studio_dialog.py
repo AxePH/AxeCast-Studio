@@ -47,6 +47,7 @@ class SQLiteStudioDialog(ctk.CTkToplevel):
             self.load_database(self.db_path)
         else:
             self._create_new_tab("SQL Editor 1", self.initial_sql or "SELECT 'Welcome to AxeSQL Studio 🪓!' AS Message, datetime('now') AS CurrentTime;")
+            self.after(150, self._run_current_tab_query)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -277,7 +278,10 @@ class SQLiteStudioDialog(ctk.CTkToplevel):
         filter_box.pack(fill="x", padx=6, pady=(6, 4))
 
         self.filter_var = tk.StringVar()
-        self.filter_var.trace("w", lambda *args: self._filter_schema_tree())
+        if hasattr(self.filter_var, "trace_add"):
+            self.filter_var.trace_add("write", lambda *args: self._filter_schema_tree())
+        else:
+            self.filter_var.trace("w", lambda *args: self._filter_schema_tree())
         self.filter_entry = ctk.CTkEntry(
             filter_box, 
             placeholder_text="🔍 Filter by name...",
@@ -567,6 +571,11 @@ class SQLiteStudioDialog(ctk.CTkToplevel):
             self._execute_sql(sql, tab_id)
 
     def _on_schema_context_menu(self, event):
+        now = time.time()
+        if hasattr(self, "_last_schema_ctx_time") and now - self._last_schema_ctx_time < 0.25:
+            return
+        self._last_schema_ctx_time = now
+
         item = self.schema_tree.identify_row(event.y)
         if not item:
             return
@@ -858,6 +867,11 @@ class SQLiteStudioDialog(ctk.CTkToplevel):
 
     def _on_grid_context_menu(self, event, tree: ttk.Treeview, tab_id: str):
         """Right-click menu for copying and editing grid cells."""
+        now = time.time()
+        if hasattr(self, "_last_grid_ctx_time") and now - self._last_grid_ctx_time < 0.25:
+            return
+        self._last_grid_ctx_time = now
+
         item = tree.identify_row(event.y)
         col_str = tree.identify_column(event.x)
         if item:

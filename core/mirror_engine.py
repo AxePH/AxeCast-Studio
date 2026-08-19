@@ -75,10 +75,14 @@ class MirrorEngine:
         if no_audio:
             cmd.append("--no-audio")
             
+        # Universal shortcut modifiers for seamless copy/paste (Cmd+C/V on Mac, Ctrl+C/V on Windows/Linux)
+        cmd.extend(["--shortcut-mod", "lctrl,lalt,lsuper,rctrl,ralt,rsuper"])
+            
         kwargs = {
             "stdout": subprocess.PIPE,
             "stderr": subprocess.PIPE,
-            "text": True
+            "text": True,
+            "env": self.sys.get_environment()
         }
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -134,6 +138,7 @@ class MirrorEngine:
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=self.sys.get_environment(),
                 creationflags=creationflags
             )
             self.active_recordings[serial] = {

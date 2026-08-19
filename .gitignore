@@ -1,32 +1,85 @@
-# Python bytecode & cache
+# ==========================================
+# Python & Bytecode Cache
+# ==========================================
 __pycache__/
 *.py[cod]
-*.class
+*$py.class
 *.pyc
+*.pyd
+*.pyo
 
-# Virtual environments
+# ==========================================
+# Virtual Environments & Packages
+# ==========================================
 .venv/
 venv/
 ENV/
 env/
+env.bak/
+venv.bak/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
 
-# PyInstaller / Build artifacts (Too large for git, use GitHub Releases instead)
+# ==========================================
+# Build & Distribution Artifacts (PyInstaller / Executables)
+# ==========================================
 build/
 dist/
+release/
 *.spec
+*.app/
+*.dmg
+*.pkg
+*.exe
 
-# User capture outputs (Screenshots & recordings)
+# ==========================================
+# SQLite / Database Temporary Journal Files
+# ==========================================
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+
+# ==========================================
+# User Captures & Clipboard Temporary Cache
+# ==========================================
 captures/
 *.mp4
 *.mkv
+*.png.tmp
+*.jpg.tmp
 
-# Temporary test logs & debug caches
-debug_launch.log
-*.tmp
+# ==========================================
+# Logs, Dumps & Temporary Files
+# ==========================================
 *.log
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+debug_launch.log
+test_*.py
 
-# IDE & OS files
-.vscode/
-.idea/
+# ==========================================
+# Operating System & IDE Specific
+# ==========================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+Desktop.ini
+
+# IDEs & Editors
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+

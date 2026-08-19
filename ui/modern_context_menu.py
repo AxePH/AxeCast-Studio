@@ -1,4 +1,5 @@
 import sys
+import time
 import tkinter as tk
 import customtkinter as ctk
 
@@ -59,14 +60,14 @@ class ModernContextMenu(ctk.CTkToplevel):
 
         self.items = []
         self._item_widgets = {}
+        self._show_timestamp = 0
 
         # Global Dismiss Bindings
-        self.bind("<FocusOut>", lambda e: self.hide())
+        self.bind("<FocusOut>", self._on_focus_out)
         self.bind("<Escape>", lambda e: self.hide())
         if master:
             master_top = master.winfo_toplevel()
             master_top.bind("<Button-1>", self._on_global_click, add="+")
-            master_top.bind("<Button-3>", self._on_global_click, add="+")
 
     def add_item(self, icon: str = "", label: str = "", shortcut: str = "", command=None, state: str = "normal", item_id: str = None):
         """Adds a 2-block row: [ Icon Column (~15% Centered) | Text Column (Left-Aligned) ]"""
@@ -232,6 +233,7 @@ class ModernContextMenu(ctk.CTkToplevel):
 
     def show(self, x: int, y: int):
         """Renders and pops up context menu at (x, y) coordinates on screen."""
+        self._show_timestamp = time.time()
         self._render_menu()
         self.update_idletasks()
 
@@ -247,7 +249,8 @@ class ModernContextMenu(ctk.CTkToplevel):
 
         self.geometry(f"{menu_w}x{menu_h}+{max(0, pos_x)}+{max(0, pos_y)}")
         self.deiconify()
-        self.focus_set()
+        self.lift()
+        self.focus_force()
 
     def hide(self):
         """Hides menu."""
@@ -256,11 +259,18 @@ class ModernContextMenu(ctk.CTkToplevel):
         except Exception:
             pass
 
+    def _on_focus_out(self, event):
+        """Safely dismiss menu on focus loss, ignoring initial launch transitions."""
+        if time.time() - getattr(self, "_show_timestamp", 0) > 0.4:
+            self.hide()
+
     def _on_global_click(self, event):
         """Auto dismiss when clicking outside context menu."""
         if not self.winfo_ismapped():
             return
-        # If click is outside menu geometry, dismiss
+        # Ignore clicks that occurred during or immediately after menu opening (< 250ms)
+        if time.time() - getattr(self, "_show_timestamp", 0) < 0.25:
+            return
         try:
             mx, my = self.winfo_rootx(), self.winfo_rooty()
             mw, mh = self.winfo_width(), self.winfo_height()

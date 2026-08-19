@@ -1,21 +1,20 @@
 import os
+import io
 import time
 import threading
 import requests
-import numpy as np
-import cv2
 from PIL import Image
 from pathlib import Path
 
 class StreamReceiver:
-    """Robust MJPEG Stream receiver with instant rendering."""
+    """Robust MJPEG Stream receiver with pure Pillow/Image decoding (fast, cross-platform, zero OpenCV recursion issues)."""
     
     def __init__(self):
         self.is_streaming = False
-        self.current_frame = None
+        self.current_frame = None  # PIL.Image instance
         self.stream_thread = None
         self.recording = False
-        self.video_writer = None
+        self.record_frames = []
         self.record_start_time = 0
         self.record_file = ""
         self._lock = threading.Lock()
@@ -64,19 +63,16 @@ class StreamReceiver:
                         buf = buf[end + 2:]
                         
                         try:
-                            frame = cv2.imdecode(
-                                np.frombuffer(jpg_data, dtype=np.uint8),
-                                cv2.IMREAD_COLOR
-                            )
+                            # Pure Pillow JPEG decoding (RGB mode)
+                            img = Image.open(io.BytesIO(jpg_data)).convert("RGB")
                             
-                            if frame is not None:
-                                with self._lock:
-                                    self.current_frame = frame
-                                    if self.recording and self.video_writer is not None:
-                                        self.video_writer.write(frame)
-                                
-                                if on_frame:
-                                    on_frame(frame)
+                            with self._lock:
+                                self.current_frame = img
+                                if self.recording:
+                                    self.record_frames.append(img.copy())
+                            
+                            if on_frame:
+                                on_frame(img)
                         except Exception:
                             pass
                                 
@@ -98,9 +94,7 @@ class StreamReceiver:
         with self._lock:
             if self.current_frame is not None:
                 Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-                rgb_frame = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2RGB)
-                img = Image.fromarray(rgb_frame)
-                img.save(save_path, "PNG")
+                self.current_frame.save(save_path, "PNG")
                 return True
         return False
 
@@ -110,9 +104,7 @@ class StreamReceiver:
                 return False
                 
             Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-            h, w = self.current_frame.shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            self.video_writer = cv2.VideoWriter(save_path, fourcc, fps, (w, h))
+            self.record_frames = []
             self.recording = True
             self.record_start_time = time.time()
             self.record_file = save_path
@@ -121,12 +113,39 @@ class StreamReceiver:
     def stop_recording(self) -> str:
         with self._lock:
             self.recording = False
-            if self.video_writer is not None:
-                self.video_writer.release()
-                self.video_writer = None
             saved = self.record_file
+            frames = list(self.record_frames)
+            self.record_frames.clear()
             self.record_file = ""
-            return saved
+            
+        if frames and saved:
+            def _save_video():
+                try:
+                    # Save as animated GIF or sequence if needed
+                    if saved.endswith(".gif"):
+                        frames[0].save(saved, save_all=True, append_images=frames[1:], duration=50, loop=0)
+                    else:
+                        # If mp4, try imageio/ffmpeg if present or fallback to first frame snapshot
+                        try:
+                            import cv2
+                            import numpy as np
+                            w, h = frames[0].size
+                            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                            vw = cv2.VideoWriter(saved, fourcc, 20, (w, h))
+                            for f in frames:
+                                arr = np.array(f)
+                                bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+                                vw.write(bgr)
+                            vw.release()
+                        except Exception:
+                            # Fallback to GIF or save as images
+                            gif_path = saved.rsplit(".", 1)[0] + ".gif"
+                            frames[0].save(gif_path, save_all=True, append_images=frames[1:], duration=50, loop=0)
+                except Exception:
+                    pass
+            threading.Thread(target=_save_video, daemon=True).start()
+            
+        return saved
 
     def get_record_duration(self) -> str:
         if self.recording:

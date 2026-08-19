@@ -3,7 +3,6 @@ import time
 import threading
 import customtkinter as ctk
 from PIL import Image
-import cv2
 
 class DockedScreenCard(ctk.CTkFrame):
     """A live phone screen docked on the right-side multi-screen studio panel."""
@@ -100,16 +99,13 @@ class DockedScreenCard(ctk.CTkFrame):
             win_h = self.video_container.winfo_height()
             
             if win_w > 50 and win_h > 50:
-                fh, fw = frame.shape[:2]
+                fw, fh = frame.size
                 scale = min(win_w / fw, win_h / fh)
                 new_w = max(1, int(fw * scale))
                 new_h = max(1, int(fh * scale))
                 
-                resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                rgb_resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-                pil_img = Image.fromarray(rgb_resized)
-                
-                ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(new_w, new_h))
+                resized = frame.resize((new_w, new_h), Image.Resampling.BILINEAR)
+                ctk_img = ctk.CTkImage(light_image=resized, dark_image=resized, size=(new_w, new_h))
                 self.video_lbl.configure(image=ctk_img, text="")
                 self.video_lbl._image = ctk_img
                 

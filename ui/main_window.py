@@ -27,7 +27,7 @@ try:
 except ImportError:
     _has_tkdnd = False
 
-if _has_tkdnd:
+if _has_tkdnd and sys.platform != "darwin":
     class BaseWindow(ctk.CTk, TkinterDnD.DnDWrapper):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -90,6 +90,7 @@ class MainWindow(BaseWindow):
         self.res_monitor = ResourceMonitor(update_interval=1.5)
         
         self._build_header()
+        self._build_prerequisite_banner()
         self._build_toolbar()
         self._build_main_layout()
         self._build_statusbar()
@@ -107,8 +108,23 @@ class MainWindow(BaseWindow):
         # Cleanly shut down all child windows, mirror processes, and background threads on exit
         self.protocol("WM_DELETE_WINDOW", self._on_app_close)
         
+        # Force initial layout and canvas drawing on macOS
+        self.update_idletasks()
+        if sys.platform == "darwin":
+            self.after(50, self._force_render_macos)
+        
         # Silent Background Update Check after 3 seconds
         self.after(3000, self._check_update_startup)
+
+    def _force_render_macos(self):
+        try:
+            w = self.winfo_width()
+            h = self.winfo_height()
+            self.geometry(f"{w}x{h}")
+            self.update_idletasks()
+            self.lift()
+        except Exception:
+            pass
 
     def _check_update_startup(self):
         try:
@@ -230,6 +246,91 @@ class MainWindow(BaseWindow):
         except Exception:
             pass
 
+    def _build_prerequisite_banner(self):
+        prereqs = self.sys.check_prerequisites()
+        if prereqs.get("all_ok", True):
+            return
+            
+        missing = []
+        if not prereqs.get("adb_found"):
+            missing.append("adb")
+        if not prereqs.get("engine_found"):
+            missing.append("scrcpy")
+            
+        missing_str = " & ".join(missing)
+        is_mac = sys.platform == "darwin"
+        install_cmd = "brew install scrcpy android-platform-tools" if is_mac else "sudo apt install scrcpy adb"
+        
+        self.prereq_banner = ctk.CTkFrame(
+            self,
+            corner_radius=8,
+            fg_color=("#fef3c7", "#3b1a03"),
+            border_width=1,
+            border_color=("#f59e0b", "#d97706")
+        )
+        self.prereq_banner.pack(fill="x", side="top", padx=16, pady=(8, 0))
+        
+        icon_lbl = ctk.CTkLabel(
+            self.prereq_banner,
+            text="⚠️",
+            font=ctk.CTkFont(size=15)
+        )
+        icon_lbl.pack(side="left", padx=(12, 4), pady=6)
+        
+        msg_lbl = ctk.CTkLabel(
+            self.prereq_banner,
+            text=f"Missing runtime tool: {missing_str} — Please run: {install_cmd}",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=("#92400e", "#fde68a")
+        )
+        msg_lbl.pack(side="left", padx=4, pady=6)
+        
+        def auto_install():
+            from ui.installer_dialog import ToolInstallerDialog
+            def on_complete():
+                try:
+                    self.prereq_banner.destroy()
+                except Exception:
+                    pass
+                self.refresh_devices_async()
+            ToolInstallerDialog(self, on_complete=on_complete)
+            
+        def copy_cmd():
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(install_cmd)
+                copy_btn.configure(text="✅ Copied!")
+                self.after(2000, lambda: copy_btn.configure(text="📋 Copy Command"))
+            except Exception:
+                pass
+
+        btn_box = ctk.CTkFrame(self.prereq_banner, fg_color="transparent")
+        btn_box.pack(side="right", padx=(4, 10), pady=6)
+        
+        auto_btn = ctk.CTkButton(
+            btn_box,
+            text="⚡ Auto Install",
+            width=100,
+            height=26,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("#0284c7", "#0369a1"),
+            hover_color=("#0369a1", "#075985"),
+            command=auto_install
+        )
+        auto_btn.pack(side="right", padx=(4, 0))
+                
+        copy_btn = ctk.CTkButton(
+            btn_box,
+            text="📋 Copy Command",
+            width=115,
+            height=26,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("#d97706", "#b45309"),
+            hover_color=("#b45309", "#92400e"),
+            command=copy_cmd
+        )
+        copy_btn.pack(side="right")
+
     def _build_toolbar(self):
         toolbar = ctk.CTkFrame(self, height=46, corner_radius=0, fg_color=("#f8fafc", "#0f172a"))
         toolbar.pack(fill="x", side="top", padx=16, pady=(10, 4))
@@ -344,6 +445,7 @@ class MainWindow(BaseWindow):
         
         self.empty_frame = ctk.CTkFrame(self.scroll_frame, fg_color=("#f1f5f9", "#1e293b"), corner_radius=12)
         self._build_empty_state()
+        self.empty_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
         self.right_dock_panel = ctk.CTkFrame(self.main_split, fg_color=("#f1f5f9", "#1e293b"), corner_radius=10, width=0)
 
@@ -352,41 +454,72 @@ class MainWindow(BaseWindow):
             widget.destroy()
             
         icon = ctk.CTkLabel(self.empty_frame, text="📱🔌", font=ctk.CTkFont(size=44))
-        icon.pack(pady=(36, 12))
+        icon.pack(pady=(28, 10))
         
         title = ctk.CTkLabel(
             self.empty_frame,
             text="No Connected Mobile Devices Found",
-            font=ctk.CTkFont(size=18, weight="bold")
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#38bdf8"
         )
         title.pack(pady=4)
         
         guide_text = (
-            "📌 Choose your preferred connection method:\n\n"
-            "Method 1 (Wireless / No Dev Mode):\n"
-            "• Open AxeCast Stream app on phone and tap 'START STREAMING'\n"
-            "• Your device will appear automatically here!\n\n"
-            "Method 2 (USB Cable / 60 FPS Pro Mode):\n"
-            "• Enable USB Debugging in phone Developer Options and plug in USB cable"
+            "📌 How to connect your Android device:\n\n"
+            "Method 1: USB Cable (60 FPS Ultra-Fast Pro Mode)\n"
+            "• Turn on USB Debugging in phone Developer Options & connect USB cable\n"
+            "• Accept 'Allow USB debugging' prompt on your phone screen\n\n"
+            "Method 2: Companion APK (No Developer Mode Required)\n"
+            "• Install AxeCast Stream APK on your phone & tap 'START STREAMING'\n\n"
+            "Method 3: Wireless ADB over Wi-Fi\n"
+            "• Connect phone over Wi-Fi IP address"
         )
         guide_label = ctk.CTkLabel(
             self.empty_frame,
             text=guide_text,
-            font=ctk.CTkFont(size=13),
+            font=ctk.CTkFont(size=12),
             justify="center",
             text_color=("#64748b", "#94a3b8")
         )
-        guide_label.pack(padx=24, pady=12)
+        guide_label.pack(padx=24, pady=10)
         
-        scan_btn = ctk.CTkButton(
-            self.empty_frame,
-            text="🔍 Scan for Devices",
-            height=38,
-            font=ctk.CTkFont(size=13, weight="bold"),
+        btn_row = ctk.CTkFrame(self.empty_frame, fg_color="transparent")
+        btn_row.pack(pady=(8, 28))
+        
+        refresh_btn = ctk.CTkButton(
+            btn_row,
+            text="🔄 Scan Devices",
+            height=36,
+            width=120,
+            font=ctk.CTkFont(size=12, weight="bold"),
             fg_color=("#0284c7", "#0369a1"),
             command=self.refresh_devices_async
         )
-        scan_btn.pack(pady=(8, 36))
+        refresh_btn.pack(side="left", padx=6)
+        
+        wifi_btn = ctk.CTkButton(
+            btn_row,
+            text="📶 Connect Wi-Fi",
+            height=36,
+            width=130,
+            font=ctk.CTkFont(size=12),
+            fg_color=("#334155", "#1e293b"),
+            hover_color=("#475569", "#334155"),
+            command=self._open_wireless_dialog
+        )
+        wifi_btn.pack(side="left", padx=6)
+        
+        apk_btn = ctk.CTkButton(
+            btn_row,
+            text="📲 Companion APK",
+            height=36,
+            width=135,
+            font=ctk.CTkFont(size=12),
+            fg_color=("#7c3aed", "#6d28d9"),
+            hover_color=("#6d28d9", "#5b21b6"),
+            command=self._open_nodev_dialog
+        )
+        apk_btn.pack(side="left", padx=6)
 
     def _build_statusbar(self):
         self.status_bar = ctk.CTkFrame(self, height=30, corner_radius=0, fg_color=("#e2e8f0", "#0f172a"))

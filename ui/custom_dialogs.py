@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 import customtkinter as ctk
 
 class CustomPromptDialog(ctk.CTkToplevel):
@@ -175,7 +177,7 @@ class CustomConfirmDialog(ctk.CTkToplevel):
         self.destroy()
 
 
-def ask_string(parent, title: str, prompt: str, initial_value: str = "", placeholder: str = "") -> str | None:
+def ask_string(parent, title: str, prompt: str, initial_value: str = "", placeholder: str = "") -> Optional[str]:
     dlg = CustomPromptDialog(parent, title=title, prompt=prompt, initial_value=initial_value, placeholder=placeholder)
     return dlg.result
 

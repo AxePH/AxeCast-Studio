@@ -3,7 +3,6 @@ import time
 import threading
 import customtkinter as ctk
 from PIL import Image
-import cv2
 
 class StreamViewer(ctk.CTkToplevel):
     """Live HD viewer window for No-Dev stream with screenshot and record buttons."""
@@ -93,21 +92,15 @@ class StreamViewer(ctk.CTkToplevel):
             win_h = self.canvas_frame.winfo_height()
             
             if win_w > 50 and win_h > 50:
-                fh, fw = frame.shape[:2]
+                fw, fh = frame.size
                 scale = min(win_w / fw, win_h / fh)
                 new_w = max(1, int(fw * scale))
                 new_h = max(1, int(fh * scale))
                 
-                # High quality OpenCV resize for sharp text & graphics
-                if scale < 1.0:
-                    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
-                else:
-                    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
-                    
-                rgb_resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-                pil_img = Image.fromarray(rgb_resized)
+                # Fast high-quality Pillow resize
+                resized = frame.resize((new_w, new_h), Image.Resampling.BILINEAR)
                 
-                ctk_img = ctk.CTkImage(light_image=pil_img, dark_image=pil_img, size=(new_w, new_h))
+                ctk_img = ctk.CTkImage(light_image=resized, dark_image=resized, size=(new_w, new_h))
                 self.video_label.configure(image=ctk_img)
                 self.video_label._image = ctk_img
                 

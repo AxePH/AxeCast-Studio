@@ -166,9 +166,12 @@ class SystemClipboardHelper:
         # 2. macOS AppleScript Clipboard
         elif sys.platform == "darwin":
             try:
-                posix_list = ", ".join([f'POSIX file "{f}"' for f in valid_files])
-                cmd = f'set the clipboard to {{{posix_list}}}'
-                subprocess.run(["osascript", "-e", cmd], timeout=2)
+                if len(valid_files) == 1:
+                    cmd = f'set the clipboard to (POSIX file "{valid_files[0]}")'
+                else:
+                    posix_list = ", ".join([f'POSIX file "{f}"' for f in valid_files])
+                    cmd = f'set the clipboard to {{{posix_list}}}'
+                subprocess.run(["osascript", "-e", cmd], timeout=3)
                 return True
             except Exception:
                 pass

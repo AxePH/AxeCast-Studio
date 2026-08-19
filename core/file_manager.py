@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 from pathlib import Path
 from .system_detector import SystemDetector
@@ -73,7 +74,17 @@ class DeviceFileManager:
                 if "?" in date_str:
                     date_str = "--"
                     
-                name = " ".join(parts[7:])
+                # Extract exact name preserving multiple consecutive spaces & unicode characters
+                m = re.search(r'\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}\s+', line)
+                if m:
+                    name = line[m.end():]
+                else:
+                    m2 = re.search(r'(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{1,2}:\d{2}\s+', line)
+                    if m2:
+                        name = line[m2.end():]
+                    else:
+                        name = " ".join(parts[7:])
+                        
                 link_target = ""
                 if " -> " in name:
                     link_parts = name.split(" -> ")
@@ -91,7 +102,7 @@ class DeviceFileManager:
             if name in (".", "..") or not name:
                 continue
                 
-            name = "".join(c for c in name if c.isprintable() or ord(c) > 127).strip()
+            name = "".join(c for c in name if c.isprintable() or ord(c) > 127).rstrip("\r\n")
             if not name:
                 continue
                 
@@ -190,7 +201,10 @@ class DeviceFileManager:
         new_name = self.generate_unique_name(existing, src_name, is_dir=is_dir)
         dst_path = f"{dst_dir.rstrip('/')}/{new_name}"
         
-        shell_cmd = f"cp -r '{src_path}' '{dst_path}' 2>/dev/null || cat '{src_path}' > '{dst_path}' 2>/dev/null"
+        src_esc = src_path.replace("'", "'\\''")
+        dst_esc = dst_path.replace("'", "'\\''")
+        
+        shell_cmd = f"cp -r '{src_esc}' '{dst_esc}' 2>/dev/null || cat '{src_esc}' > '{dst_esc}' 2>/dev/null"
         code, out, err = self.sys.run_command_hidden(
             [self.adb, "-s", serial, "shell", shell_cmd],
             timeout=60
@@ -214,7 +228,10 @@ class DeviceFileManager:
         new_name = self.generate_unique_name(existing, src_name, is_dir=is_dir)
         dst_path = f"{dst_dir.rstrip('/')}/{new_name}"
         
-        shell_cmd = f"mv '{src_path}' '{dst_path}'"
+        src_esc = src_path.replace("'", "'\\''")
+        dst_esc = dst_path.replace("'", "'\\''")
+        
+        shell_cmd = f"mv '{src_esc}' '{dst_esc}'"
         code, out, err = self.sys.run_command_hidden(
             [self.adb, "-s", serial, "shell", shell_cmd],
             timeout=30
@@ -229,7 +246,10 @@ class DeviceFileManager:
         parent_dir = os.path.dirname(old_path).rstrip("/") or "/"
         new_path = f"{parent_dir.rstrip('/')}/{new_name.strip()}"
         
-        shell_cmd = f"mv '{old_path}' '{new_path}'"
+        old_esc = old_path.replace("'", "'\\''")
+        new_esc = new_path.replace("'", "'\\''")
+        
+        shell_cmd = f"mv '{old_esc}' '{new_esc}'"
         code, out, err = self.sys.run_command_hidden(
             [self.adb, "-s", serial, "shell", shell_cmd],
             timeout=15
@@ -267,8 +287,9 @@ class DeviceFileManager:
     def create_folder(self, serial: str, remote_path: str) -> tuple[bool, str]:
         self.clear_cache(serial)
         target_path = self.normalize_path(remote_path)
+        target_esc = target_path.replace("'", "'\\''")
         code, out, err = self.sys.run_command_hidden(
-            [self.adb, "-s", serial, "shell", f"mkdir -p '{target_path}'"],
+            [self.adb, "-s", serial, "shell", f"mkdir -p '{target_esc}'"],
             timeout=10
         )
         if code == 0:
@@ -278,10 +299,33 @@ class DeviceFileManager:
     def delete_item(self, serial: str, remote_path: str) -> tuple[bool, str]:
         self.clear_cache(serial)
         target_path = self.normalize_path(remote_path)
+        escaped_path = target_path.replace("'", "'\\''")
+        
+        # Robust multi-layer delete: rm -rf -> toybox rm -rf -> rm -f -> su 0 rm -rf
+        cmd1 = f"rm -rf '{escaped_path}'"
+        cmd2 = f"toybox rm -rf '{escaped_path}'"
+        cmd3 = f"rm -f '{escaped_path}'"
+        cmd4 = f"su 0 rm -rf '{escaped_path}'"
+        shell_cmd = f"{cmd1} || {cmd2} || {cmd3} || {cmd4}"
+        
         code, out, err = self.sys.run_command_hidden(
-            [self.adb, "-s", serial, "shell", f"rm -rf '{target_path}'"],
+            [self.adb, "-s", serial, "shell", shell_cmd],
             timeout=15
         )
-        if code == 0:
+        
+        # Check if file was actually removed
+        chk_code, chk_out, _ = self.sys.run_command_hidden(
+            [self.adb, "-s", serial, "shell", f"test -e '{escaped_path}' && echo 'EXISTS' || echo 'DELETED'"],
+            timeout=5
+        )
+        is_deleted = "DELETED" in chk_out
+        
+        # Notify Android MediaStore to unindex the file immediately
+        self.sys.run_command_hidden(
+            [self.adb, "-s", serial, "shell", f"am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d 'file://{escaped_path}' 2>/dev/null"],
+            timeout=5
+        )
+        
+        if is_deleted or code == 0:
             return True, "Item deleted successfully"
-        return False, err.strip() or out.strip()
+        return False, err.strip() or out.strip() or "Permission denied by Android OS"

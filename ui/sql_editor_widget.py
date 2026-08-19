@@ -344,6 +344,11 @@ class SQLEditorWidget(ctk.CTkFrame):
 
     def _show_context_menu(self, event):
         """Displays rich 2-column right-click context menu inside SQL Editor."""
+        now = time.time()
+        if hasattr(self, "_last_ctx_time") and now - self._last_ctx_time < 0.25:
+            return "break"
+        self._last_ctx_time = now
+        
         self._hide_popup()
         if not hasattr(self, "context_menu") or not self.context_menu:
             self._setup_context_menu()

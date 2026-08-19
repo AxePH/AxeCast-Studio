@@ -17,9 +17,31 @@
 | Platform | Download | How to Use |
 | :--- | :--- | :--- |
 | 🪟 **Windows** (x64) | [`AxeCast-Studio-Windows-x64.zip`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Extract ZIP → double-click `AxeCast-Studio.exe` |
-| 🍎 **macOS** (ARM64 / Intel) | [`AxeCast-Studio-macOS-arm64.tar.gz`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Extract → open `AxeCast-Studio.app` |
-| 🐧 **Linux** (x64) | [`AxeCast-Studio-Linux-x64.tar.gz`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Extract → run `./AxeCast-Studio` |
+| 🍎 **macOS** (ARM64 / Intel) | [`AxeCast-Studio-macOS-arm64.zip`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Extract → move to `Applications` → open `AxeCast-Studio.app` |
+| 🐧 **Linux** (x64) | [`AxeCast-Studio-Linux-x64.tar.gz`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Extract → run `./run.sh` |
 | 📲 **Android APK** | [`axecast_stream.apk`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Install on phone for wireless streaming |
+
+### 🍎 หมายเหตุสำหรับผู้ใช้ macOS (วิธีปลดล็อคความปลอดภัย Gatekeeper ในการเปิดครั้งแรก):
+
+เนื่องจากเป็นแอปพลิเคชัน Open Source ที่ไม่ได้ผ่าน Mac App Store ระบบ macOS Gatekeeper อาจแสดงการแจ้งเตือนความปลอดภัย (*"Apple could not verify..."* หรือ *"Not Opened"*):
+
+#### 🔹 วิธีที่ 1: รันคำสั่งปลดล็อคผ่าน Terminal (แนะนำ - ครั้งเดียวจบ)
+เปิด Terminal แล้วคัดลอกคำสั่งนี้ไปวางแล้วกด Enter:
+```bash
+# กรณีแอปอยู่ในโฟลเดอร์ Applications:
+xattr -cr /Applications/AxeCast-Studio.app
+
+# หรือกรณีแอปอยู่ในโฟลเดอร์ Downloads:
+xattr -cr ~/Downloads/AxeCast-Studio.app
+```
+
+#### 🔹 วิธีที่ 2: กดอนุญาตผ่าน System Settings
+1. เมื่อมีหน้าต่างเตือนขึ้นมา ให้กดปุ่ม **Done**
+2. ไปที่ **Apple Menu ()** → **System Settings (การตั้งค่าระบบ)** → **Privacy & Security (ความเป็นส่วนตัวและความปลอดภัย)**
+3. เลื่อนลงมาล่างสุด จะเห็นข้อความเกี่ยวกับ *AxeCast-Studio* ให้กดปุ่ม **"Open Anyway" (เปิดต่อไป)**
+
+#### 🔹 วิธีที่ 3: คลิกขวาเปิด
+คลิกขวา (หรือ Control + คลิก) ที่ตัวแอป `AxeCast-Studio.app` ใน Finder → เลือก **Open (เปิด)** → กดปุ่ม **Open** อีกครั้ง
 
 ---
 

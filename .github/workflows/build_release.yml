@@ -7,14 +7,16 @@ name: Build & Release AxeCast Studio
 # ============================================================
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
     inputs:
       version:
         description: 'Release version (e.g. v1.0.0)'
-        required: true
-        default: 'v0.0.1-dev'
+        required: false
+        default: 'v1.0.0'
 
 permissions:
   contents: write

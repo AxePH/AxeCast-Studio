@@ -109,14 +109,14 @@ jobs:
           python -m nuitka
           --standalone
           --macos-create-app-bundle
+          --macos-app-name=AxeCast-Studio
+          --macos-app-icon=assets/icon.png
           --enable-plugin=tk-inter
           --include-data-dir=core=core
           --include-data-dir=ui=ui
           --include-data-dir=assets=assets
           --include-data-files=axecast_stream.apk=axecast_stream.apk
           --include-data-files=requirements.txt=requirements.txt
-          --macos-app-icon=assets/icon.png
-          --output-filename=AxeCast-Studio
           --output-dir=release
           app.py
 
@@ -124,7 +124,7 @@ jobs:
         run: |
           cd release
           mkdir -p dmg_content
-          cp -R app.dist/AxeCast-Studio.app dmg_content/ 2>/dev/null || cp -R *.app dmg_content/ 2>/dev/null || true
+          cp -R *.app dmg_content/ 2>/dev/null || cp -R app.dist/*.app dmg_content/ 2>/dev/null || true
           cp ../README.md dmg_content/
           cp ../axecast_stream.apk dmg_content/
           tar -czf AxeCast-Studio-macOS-arm64.tar.gz -C dmg_content .

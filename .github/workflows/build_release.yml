@@ -310,10 +310,10 @@ jobs:
             - **Smart GitHub Auto-Update Checker**
             - **Native Packaged Binaries** with self-contained dependencies
 
-            > **🍎 หมายเหตุสำหรับผู้ใช้ macOS:**
-            > หากเปิดครั้งแรกแล้วระบบขึ้นเตือนความปลอดภัย (Gatekeeper):
-            > - คลิกขวาที่ `AxeCast-Studio.app` -> เลือก **Open (เปิด)** -> กด **Open**
-            > - หรือเปิด Terminal แล้วพิมพ์: `xattr -cr AxeCast-Studio.app`
+            > **🍎 Note for macOS Users:**
+            > If macOS Gatekeeper shows a security warning on first launch (*"Apple could not verify..."*):
+            > - Right-click `AxeCast-Studio.app` -> select **Open** -> click **Open**
+            > - Or open Terminal and run: `xattr -cr AxeCast-Studio.app`
 
           files: |
             release-files/*

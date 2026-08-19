@@ -21,27 +21,27 @@
 | 🐧 **Linux** (x64) | [`AxeCast-Studio-Linux-x64.tar.gz`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Extract → run `./run.sh` |
 | 📲 **Android APK** | [`axecast_stream.apk`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Install on phone for wireless streaming |
 
-### 🍎 หมายเหตุสำหรับผู้ใช้ macOS (วิธีปลดล็อคความปลอดภัย Gatekeeper ในการเปิดครั้งแรก):
+### 🍎 macOS First-Time Launch & Security Notice (Gatekeeper):
 
-เนื่องจากเป็นแอปพลิเคชัน Open Source ที่ไม่ได้ผ่าน Mac App Store ระบบ macOS Gatekeeper อาจแสดงการแจ้งเตือนความปลอดภัย (*"Apple could not verify..."* หรือ *"Not Opened"*):
+Because AxeCast Studio is an open-source binary distributed outside the Mac App Store, macOS Gatekeeper may show a security prompt on first launch (*"Apple could not verify..."* or *"Not Opened"*):
 
-#### 🔹 วิธีที่ 1: รันคำสั่งปลดล็อคผ่าน Terminal (แนะนำ - ครั้งเดียวจบ)
-เปิด Terminal แล้วคัดลอกคำสั่งนี้ไปวางแล้วกด Enter:
+#### 🔹 Method 1: Unlock via Terminal (Recommended — One-Time)
+Open Terminal and run:
 ```bash
-# กรณีแอปอยู่ในโฟลเดอร์ Applications:
+# If installed in Applications:
 xattr -cr /Applications/AxeCast-Studio.app
 
-# หรือกรณีแอปอยู่ในโฟลเดอร์ Downloads:
+# If running directly from Downloads:
 xattr -cr ~/Downloads/AxeCast-Studio.app
 ```
 
-#### 🔹 วิธีที่ 2: กดอนุญาตผ่าน System Settings
-1. เมื่อมีหน้าต่างเตือนขึ้นมา ให้กดปุ่ม **Done**
-2. ไปที่ **Apple Menu ()** → **System Settings (การตั้งค่าระบบ)** → **Privacy & Security (ความเป็นส่วนตัวและความปลอดภัย)**
-3. เลื่อนลงมาล่างสุด จะเห็นข้อความเกี่ยวกับ *AxeCast-Studio* ให้กดปุ่ม **"Open Anyway" (เปิดต่อไป)**
+#### 🔹 Method 2: Allow in System Settings
+1. Click **Done** on the security warning dialog.
+2. Go to **Apple Menu ()** → **System Settings** → **Privacy & Security**.
+3. Scroll to the bottom and click **"Open Anyway"** next to the *AxeCast-Studio* prompt.
 
-#### 🔹 วิธีที่ 3: คลิกขวาเปิด
-คลิกขวา (หรือ Control + คลิก) ที่ตัวแอป `AxeCast-Studio.app` ใน Finder → เลือก **Open (เปิด)** → กดปุ่ม **Open** อีกครั้ง
+#### 🔹 Method 3: Right-Click Open
+Right-click (or Control + Click) `AxeCast-Studio.app` in Finder → select **Open** → click **Open** on the confirmation prompt.
 
 ---
 

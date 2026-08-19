@@ -68,14 +68,13 @@ jobs:
             Rename-Item -Path 'release\app.dist' -NewName 'AxeCast-Studio'
             Copy-Item -Path 'README.md' -Destination 'release\AxeCast-Studio\'
             Copy-Item -Path 'axecast_stream.apk' -Destination 'release\AxeCast-Studio\'
-            Compress-Archive -Path 'release\AxeCast-Studio' -DestinationPath 'release\AxeCast-Studio-Windows-x64.zip'
           "
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: AxeCast-Studio-Windows-x64
-          path: release/AxeCast-Studio-Windows-x64.zip
+          path: release/AxeCast-Studio/
 
   # ──────────────────────────────────────────────
   # Build on macOS
@@ -144,17 +143,16 @@ jobs:
 
       - name: Package macOS release
         run: |
-          mkdir -p release/pkg
-          cp -R release/AxeCast-Studio.app release/pkg/ 2>/dev/null || cp -R release/*.app release/pkg/ 2>/dev/null || true
-          cp README.md release/pkg/
-          cp axecast_stream.apk release/pkg/
-          tar -czf release/AxeCast-Studio-macOS-arm64.tar.gz -C release/pkg .
+          mkdir -p release/AxeCast-Studio-macOS
+          cp -R release/AxeCast-Studio.app release/AxeCast-Studio-macOS/ 2>/dev/null || cp -R release/*.app release/AxeCast-Studio-macOS/ 2>/dev/null || true
+          cp README.md release/AxeCast-Studio-macOS/
+          cp axecast_stream.apk release/AxeCast-Studio-macOS/
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: AxeCast-Studio-macOS-arm64
-          path: release/AxeCast-Studio-macOS-arm64.tar.gz
+          path: release/AxeCast-Studio-macOS/
 
   # ──────────────────────────────────────────────
   # Build on Linux
@@ -204,13 +202,12 @@ jobs:
           cp run.sh release/AxeCast-Studio/
           chmod +x release/AxeCast-Studio/app.bin 2>/dev/null || chmod +x release/AxeCast-Studio/app 2>/dev/null || true
           chmod +x release/AxeCast-Studio/run.sh
-          tar -czf release/AxeCast-Studio-Linux-x64.tar.gz -C release AxeCast-Studio
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
           name: AxeCast-Studio-Linux-x64
-          path: release/AxeCast-Studio-Linux-x64.tar.gz
+          path: release/AxeCast-Studio/
 
   # ──────────────────────────────────────────────
   # Publish GitHub Release (all 3 platforms)
@@ -229,6 +226,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - name: Package release archives
+        run: |
+          cd artifacts
+          zip -r AxeCast-Studio-Windows-x64.zip AxeCast-Studio-Windows-x64/
+          tar -czf AxeCast-Studio-macOS-arm64.tar.gz -C AxeCast-Studio-macOS-arm64 .
+          tar -czf AxeCast-Studio-Linux-x64.tar.gz -C AxeCast-Studio-Linux-x64 .
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -257,9 +261,9 @@ jobs:
             - **Compiled Native Binaries** with hidden source code and zero console popups
 
           files: |
-            artifacts/AxeCast-Studio-Windows-x64/AxeCast-Studio-Windows-x64.zip
-            artifacts/AxeCast-Studio-macOS-arm64/AxeCast-Studio-macOS-arm64.tar.gz
-            artifacts/AxeCast-Studio-Linux-x64/AxeCast-Studio-Linux-x64.tar.gz
+            artifacts/AxeCast-Studio-Windows-x64.zip
+            artifacts/AxeCast-Studio-macOS-arm64.tar.gz
+            artifacts/AxeCast-Studio-Linux-x64.tar.gz
             axecast_stream.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

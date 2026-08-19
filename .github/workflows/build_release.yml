@@ -13,6 +13,16 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
+      platform:
+        description: 'Platform to build'
+        required: true
+        type: choice
+        default: 'all'
+        options:
+          - all
+          - macos
+          - windows
+          - linux
       version:
         description: 'Release version (e.g. v1.0.0)'
         required: false
@@ -31,6 +41,13 @@ jobs:
   build-windows:
     name: "🪟 Build Windows"
     runs-on: windows-latest
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'windows')) ||
+      (github.event_name == 'push' && (
+        contains(github.event.head_commit.message, '[windows]') ||
+        (!contains(github.event.head_commit.message, '[macos]') && !contains(github.event.head_commit.message, '[linux]'))
+      ))
 
     steps:
       - name: Checkout repository
@@ -82,6 +99,13 @@ jobs:
   build-macos:
     name: "🍎 Build macOS"
     runs-on: macos-latest
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'macos')) ||
+      (github.event_name == 'push' && (
+        contains(github.event.head_commit.message, '[macos]') ||
+        (!contains(github.event.head_commit.message, '[windows]') && !contains(github.event.head_commit.message, '[linux]'))
+      ))
 
     steps:
       - name: Checkout repository
@@ -144,7 +168,16 @@ jobs:
       - name: Package macOS release
         run: |
           mkdir -p release/AxeCast-Studio-macOS
-          cp -R release/AxeCast-Studio.app release/AxeCast-Studio-macOS/ 2>/dev/null || cp -R release/*.app release/AxeCast-Studio-macOS/ 2>/dev/null || true
+          # Rename app.app to AxeCast-Studio.app if needed
+          if [ -d "release/app.app" ]; then
+            mv release/app.app release/AxeCast-Studio.app
+          fi
+          # Ensure executable permissions on all binaries inside the app bundle
+          chmod -R +x release/AxeCast-Studio.app/Contents/MacOS/ 2>/dev/null || true
+          # Apply ad-hoc codesign for macOS ARM64 security requirements
+          codesign --force --deep --sign - release/AxeCast-Studio.app 2>/dev/null || true
+
+          cp -R release/AxeCast-Studio.app release/AxeCast-Studio-macOS/
           cp README.md release/AxeCast-Studio-macOS/
           cp axecast_stream.apk release/AxeCast-Studio-macOS/
 
@@ -160,6 +193,13 @@ jobs:
   build-linux:
     name: "🐧 Build Linux"
     runs-on: ubuntu-latest
+    if: |
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || inputs.platform == 'linux')) ||
+      (github.event_name == 'push' && (
+        contains(github.event.head_commit.message, '[linux]') ||
+        (!contains(github.event.head_commit.message, '[windows]') && !contains(github.event.head_commit.message, '[macos]'))
+      ))
 
     steps:
       - name: Checkout repository
@@ -216,7 +256,11 @@ jobs:
     name: "📦 Publish Release"
     needs: [build-windows, build-macos, build-linux]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+    if: |
+      always() &&
+      (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
 
     steps:
       - name: Checkout repository
@@ -230,9 +274,9 @@ jobs:
       - name: Package release archives
         run: |
           cd artifacts
-          zip -r AxeCast-Studio-Windows-x64.zip AxeCast-Studio-Windows-x64/
-          tar -czf AxeCast-Studio-macOS-arm64.tar.gz -C AxeCast-Studio-macOS-arm64 .
-          tar -czf AxeCast-Studio-Linux-x64.tar.gz -C AxeCast-Studio-Linux-x64 .
+          [ -d "AxeCast-Studio-Windows-x64" ] && zip -r AxeCast-Studio-Windows-x64.zip AxeCast-Studio-Windows-x64/ || true
+          [ -d "AxeCast-Studio-macOS-arm64" ] && tar -czf AxeCast-Studio-macOS-arm64.tar.gz -C AxeCast-Studio-macOS-arm64 . || true
+          [ -d "AxeCast-Studio-Linux-x64" ] && tar -czf AxeCast-Studio-Linux-x64.tar.gz -C AxeCast-Studio-Linux-x64 . || true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

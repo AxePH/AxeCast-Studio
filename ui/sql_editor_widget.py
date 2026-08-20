@@ -1,5 +1,6 @@
 import re
 import sys
+import time
 import tkinter as tk
 from tkinter import ttk
 import customtkinter as ctk
@@ -50,6 +51,8 @@ class SQLEditorWidget(ctk.CTkFrame):
         self.on_close_tab = on_close_tab
         self.schema_tables = []
         self.schema_columns = []
+        self._highlight_job = None  # Debounce timer for syntax highlighting
+        self._intellisense_job = None  # Debounce timer for IntelliSense popup
         
         self.font_family = "Consolas" if sys.platform.startswith("win") else "Menlo"
         self.editor_font = (self.font_family, 11)
@@ -149,22 +152,22 @@ class SQLEditorWidget(ctk.CTkFrame):
                 selectforeground=sel_fg
             )
 
-            # Syntax colors
+            # Syntax colors — use same font size without bold to prevent cursor jitter
             if is_dark:
-                self.text.tag_configure("kw", foreground="#38bdf8", font=(self.font_family, 11, "bold"))
-                self.text.tag_configure("func", foreground="#fbbf24", font=(self.font_family, 11, "bold"))
+                self.text.tag_configure("kw", foreground="#38bdf8")
+                self.text.tag_configure("func", foreground="#fbbf24")
                 self.text.tag_configure("type", foreground="#34d399")
                 self.text.tag_configure("str", foreground="#a3e635")
                 self.text.tag_configure("num", foreground="#c084fc")
-                self.text.tag_configure("comment", foreground="#64748b", font=(self.font_family, 11, "italic"))
+                self.text.tag_configure("comment", foreground="#64748b")
                 self.text.tag_configure("table", foreground="#f472b6")
             else:
-                self.text.tag_configure("kw", foreground="#0284c7", font=(self.font_family, 11, "bold"))
-                self.text.tag_configure("func", foreground="#d97706", font=(self.font_family, 11, "bold"))
+                self.text.tag_configure("kw", foreground="#0284c7")
+                self.text.tag_configure("func", foreground="#d97706")
                 self.text.tag_configure("type", foreground="#059669")
                 self.text.tag_configure("str", foreground="#15803d")
                 self.text.tag_configure("num", foreground="#7c3aed")
-                self.text.tag_configure("comment", foreground="#94a3b8", font=(self.font_family, 11, "italic"))
+                self.text.tag_configure("comment", foreground="#94a3b8")
                 self.text.tag_configure("table", foreground="#db2777")
 
         if hasattr(self, "suggest_list"):
@@ -203,79 +206,18 @@ class SQLEditorWidget(ctk.CTkFrame):
         self.suggest_list.bind("<Double-Button-1>", lambda e: self._insert_selected_suggestion())
 
     def _bind_events(self):
-        # Keyboard typing and IntelliSense
+        # Core keyboard handlers — _on_key_press handles ALL Ctrl/Cmd shortcuts
+        # to avoid Tkinter's buggy NumLock modifier matching on Windows.
         self.text.bind("<KeyRelease>", self._on_key_release)
         self.text.bind("<Key>", self._on_key_press)
-        self.text.bind("<Control-space>", lambda e: self._trigger_intellisense_manual())
         self.text.bind("<Tab>", self._handle_tab)
         self.text.bind("<Shift-Tab>", self._handle_shift_tab)
         self.text.bind("<Button-1>", lambda e: self._hide_popup())
 
-        # Execution shortcuts
+        # Non-letter shortcuts (safe from NumLock bug)
         self.text.bind("<F5>", lambda e: self._trigger_execute())
         self.text.bind("<Control-Return>", lambda e: self._trigger_execute())
-
-        # Clipboard shortcuts (explicit & universal for English and Thai layouts)
-        self.text.bind("<Control-c>", self._copy_text)
-        self.text.bind("<Control-C>", self._copy_text)
-        self.text.bind("<Command-c>", self._copy_text)
-        self.text.bind("<Command-C>", self._copy_text)
-
-        self.text.bind("<Control-v>", self._paste_text)
-        self.text.bind("<Control-V>", self._paste_text)
-        self.text.bind("<Command-v>", self._paste_text)
-        self.text.bind("<Command-V>", self._paste_text)
-
-        self.text.bind("<Control-x>", self._cut_text)
-        self.text.bind("<Control-X>", self._cut_text)
-        self.text.bind("<Command-x>", self._cut_text)
-        self.text.bind("<Command-X>", self._cut_text)
-
-        # Formatting shortcuts
-        self.text.bind("<Control-Shift-f>", lambda e: self._trigger_format())
-        self.text.bind("<Control-Shift-F>", lambda e: self._trigger_format())
-        self.text.bind("<Alt-Shift-f>", lambda e: self._trigger_format())
-        self.text.bind("<Alt-Shift-F>", lambda e: self._trigger_format())
-
-        # SQL Comment Toggle (Ctrl + / or Cmd + /)
-        self.text.bind("<Control-slash>", self._toggle_comment)
-        self.text.bind("<Control-question>", self._toggle_comment)
-        self.text.bind("<Command-slash>", self._toggle_comment)
-        self.text.bind("<Command-question>", self._toggle_comment)
-
-        # Duplicate Line (Ctrl + D or Cmd + D)
-        self.text.bind("<Control-d>", self._duplicate_line)
-        self.text.bind("<Control-D>", self._duplicate_line)
-        self.text.bind("<Command-d>", self._duplicate_line)
-        self.text.bind("<Command-D>", self._duplicate_line)
-
-        # Select All (Ctrl + A or Cmd + A)
-        self.text.bind("<Control-a>", self._select_all)
-        self.text.bind("<Control-A>", self._select_all)
-        self.text.bind("<Command-a>", self._select_all)
-        self.text.bind("<Command-A>", self._select_all)
-
-        # Save & Sync (Ctrl + S or Cmd + S)
-        self.text.bind("<Control-s>", lambda e: self._trigger_save())
-        self.text.bind("<Control-S>", lambda e: self._trigger_save())
-        self.text.bind("<Command-s>", lambda e: self._trigger_save())
-        self.text.bind("<Command-S>", lambda e: self._trigger_save())
-
-        # Refresh Schema (Ctrl + R or Cmd + R)
-        self.text.bind("<Control-r>", lambda e: self._trigger_refresh())
-        self.text.bind("<Control-R>", lambda e: self._trigger_refresh())
-        self.text.bind("<Command-r>", lambda e: self._trigger_refresh())
-        self.text.bind("<Command-R>", lambda e: self._trigger_refresh())
-
-        # Tab management (Ctrl + T, Ctrl + W or Cmd + T, Cmd + W)
-        self.text.bind("<Control-t>", lambda e: self._trigger_new_tab())
-        self.text.bind("<Control-T>", lambda e: self._trigger_new_tab())
-        self.text.bind("<Command-t>", lambda e: self._trigger_new_tab())
-        self.text.bind("<Command-T>", lambda e: self._trigger_new_tab())
-        self.text.bind("<Control-w>", lambda e: self._trigger_close_tab())
-        self.text.bind("<Control-W>", lambda e: self._trigger_close_tab())
-        self.text.bind("<Command-w>", lambda e: self._trigger_close_tab())
-        self.text.bind("<Command-W>", lambda e: self._trigger_close_tab())
+        self.text.bind("<Control-space>", lambda e: self._trigger_intellisense_manual())
 
         # Right-Click Context Menu
         self.text.bind("<Button-3>", self._show_context_menu)
@@ -491,7 +433,12 @@ class SQLEditorWidget(ctk.CTkFrame):
 
     def _on_key_press(self, event):
         # Universal Shortcut Router (captures English, Thai, CapsLock, Ctrl/Cmd)
-        is_ctrl = bool(event.state & 4) or bool(event.state & 8) or bool(event.state & 0x40000) or (sys.platform == "darwin" and bool(event.state & 8))
+        # Fix: On Windows/Linux, bit 0x8 is NumLock (not Ctrl). Only use bit 0x4 for Ctrl.
+        # On macOS, bit 0x8 is Command ⌘ which is the correct primary modifier.
+        if sys.platform == "darwin":
+            is_ctrl = bool(event.state & 4) or bool(event.state & 8)  # Ctrl or Command ⌘
+        else:
+            is_ctrl = bool(event.state & 4)  # Ctrl only (Windows/Linux)
         kc = getattr(event, "keycode", 0)
         ks = str(getattr(event, "keysym", "")).lower()
         ch = getattr(event, "char", "")
@@ -550,18 +497,36 @@ class SQLEditorWidget(ctk.CTkFrame):
 
     def _on_key_release(self, event):
         self._update_line_numbers()
-        self.highlight_syntax()
+        self._schedule_highlight()
         
         # Don't trigger intellisense on navigation keys
-        if event.keysym in ("Up", "Down", "Left", "Right", "Escape", "Control_L", "Control_R", "Shift_L", "Shift_R", "Alt_L", "Alt_R", "Return", "F5"):
+        if event.keysym in ("Up", "Down", "Left", "Right", "Escape", "Control_L", "Control_R", "Shift_L", "Shift_R", "Alt_L", "Alt_R", "Return", "F5", "Tab", "BackSpace", "Delete"):
             return
 
-        # Check current word under cursor
+        # Debounce IntelliSense popup (300ms delay to avoid jitter)
+        if self._intellisense_job:
+            self.after_cancel(self._intellisense_job)
+        self._intellisense_job = self.after(300, self._check_intellisense)
+
+    def _check_intellisense(self):
+        """Debounced IntelliSense check — runs 300ms after last keystroke."""
+        self._intellisense_job = None
         word, start_idx = self._get_current_word()
         if len(word) >= 2:
             self._show_intellisense(word, start_idx)
         else:
             self._hide_popup()
+
+    def _schedule_highlight(self):
+        """Debounced syntax highlighting — runs 150ms after last keystroke to reduce jitter."""
+        if self._highlight_job:
+            self.after_cancel(self._highlight_job)
+        self._highlight_job = self.after(150, self._do_highlight)
+
+    def _do_highlight(self):
+        """Execute the actual syntax highlighting after debounce."""
+        self._highlight_job = None
+        self.highlight_syntax()
 
     def _update_line_numbers(self):
         line_count = int(self.text.index("end-1c").split(".")[0])

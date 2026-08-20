@@ -346,16 +346,10 @@ class SQLiteStudioDialog(ctk.CTkToplevel):
         self.status_thread_lbl.pack(side="right", padx=8)
 
     def _setup_shortcuts(self):
+        # Only non-letter shortcuts here (safe from NumLock bug on Windows).
+        # All Ctrl+letter shortcuts are handled by SQLEditorWidget._on_key_press.
         self.bind("<F5>", lambda e: self._run_current_tab_query())
         self.bind("<Control-Return>", lambda e: self._run_current_tab_query())
-        self.bind("<Control-r>", lambda e: self.refresh_schema())
-        self.bind("<Control-R>", lambda e: self.refresh_schema())
-        self.bind("<Control-Shift-f>", lambda e: self._format_sql())
-        self.bind("<Control-Shift-F>", lambda e: self._format_sql())
-        self.bind("<Alt-Shift-f>", lambda e: self._format_sql())
-        self.bind("<Alt-Shift-F>", lambda e: self._format_sql())
-        self.bind("<Control-t>", lambda e: self._create_new_tab())
-        self.bind("<Control-w>", lambda e: self._close_current_tab())
 
     def _create_new_tab(self, title: str = None, initial_sql: str = ""):
         self.tab_count += 1

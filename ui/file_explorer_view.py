@@ -493,7 +493,12 @@ class DeviceFileExplorerView(ctk.CTkFrame):
             return  # Allow inline Entry widget to handle typing normally
             
         # Detect Ctrl (Windows/Linux) or Command (macOS)
-        is_ctrl = bool(event.state & 4) or bool(event.state & 8) or bool(event.state & 0x40000)
+        # Fix: On Windows/Linux, bit 0x8 is NumLock (not Ctrl). Only use bit 0x4 for Ctrl.
+        # On macOS, bit 0x8 is Command ⌘ which is the correct primary modifier.
+        if sys.platform == "darwin":
+            is_ctrl = bool(event.state & 4) or bool(event.state & 8)  # Ctrl or Command ⌘
+        else:
+            is_ctrl = bool(event.state & 4)  # Ctrl only (Windows/Linux)
         kc = getattr(event, "keycode", 0)
         ks = str(getattr(event, "keysym", "")).lower()
         ch = getattr(event, "char", "")

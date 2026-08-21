@@ -272,8 +272,9 @@ def run_server(host: str = "0.0.0.0", port: int = 9820):
 
 
 if __name__ == "__main__":
+    env_port = int(os.environ.get("PORT", 9820))
     parser = argparse.ArgumentParser(description="AxeCast Signaling & Relay Server")
     parser.add_argument("--host", default="0.0.0.0", help="Bind address (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=9820, help="Port (default: 9820)")
+    parser.add_argument("--port", type=int, default=env_port, help=f"Port (default: {env_port})")
     args = parser.parse_args()
     run_server(host=args.host, port=args.port)

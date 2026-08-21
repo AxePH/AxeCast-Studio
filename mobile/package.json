@@ -1,0 +1,21 @@
+{
+  "name": "axecast-mobile",
+  "version": "1.0.2",
+  "description": "AxeCast Stream Mobile Companion for Android & iOS",
+  "private": true,
+  "scripts": {
+    "android": "react-native run-android",
+    "ios": "react-native run-ios",
+    "build:android": "cd android && ./gradlew assembleRelease",
+    "build:ios": "cd ios && xcodebuild -workspace AxeCastStream.xcworkspace -scheme AxeCastStream -configuration Release -destination 'generic/platform=iOS' -archivePath build/AxeCastStream.xcarchive archive CODE_SIGNING_ALLOWED=NO"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-native": "0.76.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@types/react": "^18.3.0",
+    "typescript": "^5.5.0"
+  }
+}

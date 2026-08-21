@@ -1,0 +1,10 @@
+platform :ios, '15.0'
+
+target 'AxeCastStream' do
+  use_frameworks!
+  pod 'Starscream', '~> 4.0.8' # Fast WebSocket client in Swift
+
+  target 'BroadcastExtension' do
+    inherit! :search_paths
+  end
+end

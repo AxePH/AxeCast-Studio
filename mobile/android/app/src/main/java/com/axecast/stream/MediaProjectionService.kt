@@ -33,6 +33,7 @@ class MediaProjectionService : Service() {
     private var imageReader: ImageReader? = null
     private var webSocketClient: WebSocketClient? = null
     private var isStreaming = false
+    private var serverUrl = "ws://192.168.1.108:9820"
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -45,6 +46,7 @@ class MediaProjectionService : Service() {
         val resultCode = intent?.getIntExtra("RESULT_CODE", 0) ?: 0
         val dataIntent = intent?.getParcelableExtra<Intent>("DATA_INTENT")
         val roomCode = intent?.getStringExtra("ROOM_CODE") ?: ""
+        serverUrl = intent?.getStringExtra("SERVER_URL") ?: "ws://192.168.1.108:9820"
 
         val notification = createNotification("AxeCast Live Streaming (Room $roomCode)")
         startForeground(1, notification)
@@ -53,7 +55,7 @@ class MediaProjectionService : Service() {
             val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
             setupVirtualDisplay()
-            connectWebSocket(roomCode)
+            connectWebSocket(roomCode, serverUrl)
         }
 
         return START_NOT_STICKY
@@ -64,14 +66,19 @@ class MediaProjectionService : Service() {
         val metrics = DisplayMetrics()
         wm.defaultDisplay.getRealMetrics(metrics)
 
-        val width = metrics.widthPixels / 2
-        val height = metrics.heightPixels / 2
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
         val density = metrics.densityDpi
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        // Scale down to 720p width for ultra-smooth 60fps streaming
+        val scale = if (width > 720) 720.0f / width else 1.0f
+        val targetWidth = (width * scale).toInt()
+        val targetHeight = (height * scale).toInt()
+
+        imageReader = ImageReader.newInstance(targetWidth, targetHeight, PixelFormat.RGBA_8888, 2)
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "AxeCastVirtualDisplay",
-            width, height, density,
+            targetWidth, targetHeight, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader?.surface, null, null
         )
@@ -85,13 +92,23 @@ class MediaProjectionService : Service() {
                 val buffer = planes[0].buffer
                 val pixelStride = planes[0].pixelStride
                 val rowStride = planes[0].rowStride
-                val rowPadding = rowStride - pixelStride * width
+                val rowPadding = rowStride - pixelStride * targetWidth
 
-                val bitmap = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
-                bitmap.copyPixelsFromBuffer(buffer)
+                // Allocate full buffer bitmap
+                val rawBitmap = Bitmap.createBitmap(targetWidth + rowPadding / pixelStride, targetHeight, Bitmap.Config.ARGB_8888)
+                rawBitmap.copyPixelsFromBuffer(buffer)
+
+                // Perfect aspect ratio: Crop out raw stride rowPadding so there is ZERO black bar or stretching!
+                val cleanBitmap = if (rowPadding > 0) {
+                    val cropped = Bitmap.createBitmap(rawBitmap, 0, 0, targetWidth, targetHeight)
+                    rawBitmap.recycle()
+                    cropped
+                } else {
+                    rawBitmap
+                }
 
                 val out = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 60, out)
+                cleanBitmap.compress(Bitmap.CompressFormat.JPEG, 65, out)
                 val base64Data = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
 
                 val frameJson = JSONObject().apply {
@@ -100,7 +117,7 @@ class MediaProjectionService : Service() {
                     put("ts", System.currentTimeMillis())
                 }
                 webSocketClient?.send(frameJson.toString())
-                bitmap.recycle()
+                cleanBitmap.recycle()
             } catch (e: Exception) {
                 // Ignore transient frame drop
             } finally {
@@ -109,9 +126,9 @@ class MediaProjectionService : Service() {
         }, null)
     }
 
-    private fun connectWebSocket(roomCode: String) {
+    private fun connectWebSocket(roomCode: String, url: String) {
         try {
-            val uri = URI("ws://10.0.2.2:9820") // Default local bridge
+            val uri = URI(url)
             webSocketClient = object : WebSocketClient(uri) {
                 override fun onOpen(handshakedata: ServerHandshake?) {
                     val createJson = JSONObject().apply {

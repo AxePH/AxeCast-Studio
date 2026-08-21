@@ -80,6 +80,11 @@ If you prefer running from source code instead of the pre-built binary:
 ### 5. 📲 Companion APK Wireless Mode (No Developer Options)
 * Stream high-framerate video and audio wirelessly using the companion **`axecast_stream.apk`** without enabling USB debugging.
 
+### 6. 🌐 In-House Remote Session & Multi-Client Broadcasting
+* **1-to-Many Remote Collaboration:** 1 Mobile Phone can broadcast its screen and real-time logs simultaneously to multiple PCs/Macs using a secure **6-digit Room Code**.
+* **Zero 3rd-Party Dependencies:** Works 100% standalone without Tailscale, VPNs, or external services. Includes an embedded local relay server or connects to any custom relay.
+* **Dual-Pane Remote Studio Viewer:** Integrated live screen mirror + searchable, color-coded Logcat stream in a single unified window.
+
 ---
 
 ## 📦 Setup & Prerequisites (Source Code)

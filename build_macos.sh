@@ -66,6 +66,7 @@ $PIP_EXEC run pyinstaller \
   --add-data "axecast_stream.apk:." \
   --collect-all customtkinter \
   --collect-all tkinterdnd2 \
+  --collect-all websockets \
   --distpath release \
   app.py
 

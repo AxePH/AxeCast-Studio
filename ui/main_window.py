@@ -393,6 +393,18 @@ class MainWindow(BaseWindow):
         )
         self.logs_btn.pack(side="left", padx=4)
 
+        self.remote_btn = ctk.CTkButton(
+            left_tb,
+            text="🌐 Remote Room",
+            height=32,
+            width=120,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color=("#7c3aed", "#6d28d9"),
+            hover_color=("#6d28d9", "#5b21b6"),
+            command=self._open_remote_room
+        )
+        self.remote_btn.pack(side="left", padx=4)
+
         right_tb = ctk.CTkFrame(toolbar, fg_color="transparent")
         right_tb.pack(side="right", fill="y", pady=4)
         
@@ -728,6 +740,14 @@ class MainWindow(BaseWindow):
 
     def _open_wireless_dialog(self):
         WirelessDialog(self, self.adb, on_connected=self.refresh_devices_async)
+
+    def _open_remote_room(self):
+        from ui.remote_room_dialog import RemoteRoomDialog
+        def on_join(server_url, room_code):
+            from ui.remote_viewer import RemoteViewer
+            save_dir = self.settings.get("save_dir", "captures")
+            RemoteViewer(self, server_url=server_url, room_code=room_code, save_dir=save_dir)
+        RemoteRoomDialog(self, on_join=on_join)
 
     def _open_settings_dialog(self):
         SettingsDialog(self, self.settings, on_save=self._on_settings_saved)

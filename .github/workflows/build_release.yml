@@ -77,6 +77,7 @@ jobs:
             --collect-all customtkinter `
             --collect-all tkinterdnd2 `
             --collect-all windnd `
+            --collect-all websockets `
             --distpath release `
             app.py
 
@@ -149,6 +150,7 @@ jobs:
             --add-data "axecast_stream.apk:." \
             --collect-all customtkinter \
             --collect-all tkinterdnd2 \
+            --collect-all websockets \
             --distpath release \
             app.py
 
@@ -221,6 +223,7 @@ jobs:
             --add-data "axecast_stream.apk:." \
             --collect-all customtkinter \
             --collect-all tkinterdnd2 \
+            --collect-all websockets \
             --distpath release \
             app.py
 

@@ -8,7 +8,7 @@ class DockedScreenCard(ctk.CTkFrame):
     """A live phone screen docked on the right-side multi-screen studio panel."""
     
     def __init__(self, master, serial: str, model_name: str, stream_url: str = "", receiver=None, on_pop_out=None, on_close=None, save_dir="captures", **kwargs):
-        super().__init__(master, width=320, corner_radius=10, fg_color=("#0f172a", "#090d16"), border_width=1, border_color=("#334155", "#1e293b"), **kwargs)
+        super().__init__(master, width=340, corner_radius=10, fg_color=("#0f172a", "#090d16"), border_width=1, border_color=("#334155", "#1e293b"), **kwargs)
         
         self.serial = serial
         self.model = model_name
@@ -47,18 +47,17 @@ class DockedScreenCard(ctk.CTkFrame):
         
         if self.on_pop_out:
             pop_btn = ctk.CTkButton(
-                hdr, text="↗", width=26, height=24,
-                font=ctk.CTkFont(size=12, weight="bold"),
-                fg_color="transparent", text_color="#cbd5e1",
-                hover_color=("#334155", "#1e293b"),
+                hdr, text="↗ Full Window", width=90, height=24,
+                font=ctk.CTkFont(size=11),
+                fg_color=("#334155", "#1e293b"), text_color="#cbd5e1",
+                hover_color=("#475569", "#334155"),
                 command=lambda: self.on_pop_out(self.serial, self.model, self.stream_url)
             )
             pop_btn.pack(side="right", padx=2)
 
-        # Video Display Canvas
-        self.video_container = ctk.CTkFrame(self, height=520, fg_color="black", corner_radius=6)
+        # Video Display Canvas (Fully Responsive & Fills available space)
+        self.video_container = ctk.CTkFrame(self, fg_color="black", corner_radius=6)
         self.video_container.pack(fill="both", expand=True, padx=4, pady=2)
-        self.video_container.pack_propagate(False)
         
         self.video_lbl = ctk.CTkLabel(self.video_container, text="Connecting...", font=ctk.CTkFont(size=11), text_color="#64748b")
         self.video_lbl.pack(fill="both", expand=True)

@@ -647,7 +647,7 @@ class MainWindow(BaseWindow):
             on_close=self.undock_screen,
             save_dir=self.settings.get("save_dir", "captures")
         )
-        card.pack(side="left", padx=4, pady=2, fill="both")
+        card.pack(side="left", padx=4, pady=2, fill="both", expand=True)
         
         self.docked_screens[serial] = {
             "card": card,

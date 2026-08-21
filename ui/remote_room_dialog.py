@@ -83,9 +83,9 @@ class RemoteRoomDialog(ctk.CTkToplevel):
         self.code_entry.pack()
         self.code_entry.bind("<Return>", lambda e: self._on_join_click())
         
-        # Server URL row with Preset & Paste Buttons
+        # Server URL row with Paste Button
         server_frame = ctk.CTkFrame(tab, fg_color="transparent")
-        server_frame.pack(fill="x", padx=24, pady=(10, 2))
+        server_frame.pack(fill="x", padx=24, pady=(12, 4))
         
         ctk.CTkLabel(
             server_frame,
@@ -95,48 +95,25 @@ class RemoteRoomDialog(ctk.CTkToplevel):
         
         self.server_entry = ctk.CTkEntry(
             server_frame,
-            placeholder_text="ws://<server-ip>:9820",
-            height=32,
+            placeholder_text="ws://<server-ip>:9820 or wss://<server-domain>",
+            height=34,
             font=ctk.CTkFont(size=12)
         )
-        self.server_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        self.server_entry.insert(0, "ws://localhost:9820")
+        self.server_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self._enable_clipboard_shortcuts(self.server_entry)
         self._enable_clipboard_shortcuts(self.code_entry)
         
         paste_btn = ctk.CTkButton(
             server_frame,
             text="📋 Paste",
-            width=64,
-            height=32,
+            width=68,
+            height=34,
             font=ctk.CTkFont(size=11, weight="bold"),
             fg_color=("#334155", "#1e293b"),
             hover_color=("#475569", "#334155"),
             command=self._paste_server_url
         )
         paste_btn.pack(side="right")
-
-        # Quick Server Presets Row
-        presets_frame = ctk.CTkFrame(tab, fg_color="transparent")
-        presets_frame.pack(fill="x", padx=24, pady=(2, 6))
-        
-        ctk.CTkLabel(
-            presets_frame,
-            text="Quick Presets:",
-            font=ctk.CTkFont(size=10, weight="bold"),
-            text_color="#64748b"
-        ).pack(side="left", padx=(0, 4))
-
-        local_btn = ctk.CTkButton(
-            presets_frame,
-            text="🏠 Local Default (ws://localhost:9820)",
-            height=22,
-            font=ctk.CTkFont(size=10),
-            fg_color=("#334155", "#475569"),
-            hover_color=("#475569", "#64748b"),
-            command=lambda: self._set_server_preset("ws://localhost:9820")
-        )
-        local_btn.pack(side="left", padx=2)
         
         # Status
         self.join_status = ctk.CTkLabel(
@@ -387,11 +364,6 @@ class RemoteRoomDialog(ctk.CTkToplevel):
                 self.server_entry.insert(0, text)
         except Exception:
             pass
-
-    def _set_server_preset(self, url: str):
-        """Quick preset button action."""
-        self.server_entry.delete(0, "end")
-        self.server_entry.insert(0, url)
 
     def destroy(self):
         # Don't stop the embedded server on dialog close - it should keep running

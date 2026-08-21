@@ -60,10 +60,8 @@ class MainActivity : AppCompatActivity() {
         btnToggle = findViewById(R.id.btnToggle)
         etServerUrl = findViewById(R.id.etServerUrl)
 
-        val savedUrl = prefs.getString("SERVER_URL", "")
-        if (!savedUrl.isNullOrEmpty()) {
-            etServerUrl.setText(savedUrl)
-        }
+        val savedUrl = prefs.getString("SERVER_URL", "ws://192.168.1.108:9820")
+        etServerUrl.setText(savedUrl)
 
         val ip = getLocalIpAddress()
         tvWifiUrl.text = "http://$ip:8080/stream"

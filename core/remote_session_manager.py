@@ -112,8 +112,17 @@ class RemoteSessionManager:
                 on_status("error", "Missing 'websockets' package. Run: pip install websockets")
             return
         
-        self.server_url = server_url
-        self.room_code = room_code
+        # Sanitize server URL
+        url = server_url.strip()
+        if url.startswith("https://"):
+            url = "wss://" + url[8:]
+        elif url.startswith("http://"):
+            url = "ws://" + url[7:]
+        elif not url.startswith("ws://") and not url.startswith("wss://"):
+            url = "wss://" + url
+            
+        self.server_url = url
+        self.room_code = room_code.replace("-", "").replace(" ", "").strip().upper()
         self._on_frame = on_frame
         self._on_log = on_log
         self._on_status = on_status

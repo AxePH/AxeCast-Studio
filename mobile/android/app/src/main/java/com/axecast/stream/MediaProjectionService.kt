@@ -17,17 +17,18 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Base64
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import org.java_websocket.client.WebSocketClient
 import org.java_websocket.handshake.ServerHandshake
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URI
 import java.util.concurrent.CopyOnWriteArrayList
+import javax.net.ssl.SSLContext
 
 class MediaProjectionService : Service() {
 
@@ -40,7 +41,7 @@ class MediaProjectionService : Service() {
     private val httpClients = CopyOnWriteArrayList<Socket>()
     private var isStreaming = false
     private var mode = "WIFI"
-    private var serverUrl = "ws://localhost:9820"
+    private var serverUrl = "ws://192.168.1.108:9820"
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -54,7 +55,7 @@ class MediaProjectionService : Service() {
         val dataIntent = intent?.getParcelableExtra<Intent>("DATA_INTENT")
         mode = intent?.getStringExtra("MODE") ?: "WIFI"
         val roomCode = intent?.getStringExtra("ROOM_CODE") ?: ""
-        serverUrl = intent?.getStringExtra("SERVER_URL") ?: "ws://localhost:9820"
+        serverUrl = intent?.getStringExtra("SERVER_URL") ?: "ws://192.168.1.108:9820"
 
         val title = if (mode == "WIFI") "AxeCast Local Wi-Fi Stream" else "AxeCast Remote Room ($roomCode)"
         val notification = createNotification(title)
@@ -101,7 +102,7 @@ class MediaProjectionService : Service() {
             out.flush()
 
             while (isStreaming && !socket.isClosed) {
-                Thread.sleep(100) // Keep socket alive while frame listener writes
+                Thread.sleep(100)
             }
         } catch (e: Exception) {
             // Client disconnected
@@ -178,13 +179,15 @@ class MediaProjectionService : Service() {
                     }
                 } else {
                     // Stream to Remote WebSocket Relay
-                    val base64Data = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
-                    val frameJson = JSONObject().apply {
-                        put("type", "frame")
-                        put("data", base64Data)
-                        put("ts", System.currentTimeMillis())
+                    if (webSocketClient?.isOpen == true) {
+                        val base64Data = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
+                        val frameJson = JSONObject().apply {
+                            put("type", "frame")
+                            put("data", base64Data)
+                            put("ts", System.currentTimeMillis())
+                        }
+                        webSocketClient?.send(frameJson.toString())
                     }
-                    webSocketClient?.send(frameJson.toString())
                 }
 
                 cleanBitmap.recycle()
@@ -196,11 +199,23 @@ class MediaProjectionService : Service() {
         }, null)
     }
 
-    private fun connectWebSocket(roomCode: String, url: String) {
+    private fun connectWebSocket(roomCode: String, rawUrl: String) {
+        var cleanUrl = rawUrl.trim()
+        if (cleanUrl.startsWith("https://", ignoreCase = true)) {
+            cleanUrl = "wss://" + cleanUrl.substring(8)
+        } else if (cleanUrl.startsWith("http://", ignoreCase = true)) {
+            cleanUrl = "ws://" + cleanUrl.substring(7)
+        } else if (!cleanUrl.startsWith("ws://", ignoreCase = true) && !cleanUrl.startsWith("wss://", ignoreCase = true)) {
+            cleanUrl = "wss://" + cleanUrl
+        }
+
         try {
-            val uri = URI(url)
+            val uri = URI(cleanUrl)
+            Log.i("AxeCast", "Connecting to WebSocket: $uri (Room $roomCode)")
+            
             webSocketClient = object : WebSocketClient(uri) {
                 override fun onOpen(handshakedata: ServerHandshake?) {
+                    Log.i("AxeCast", "✅ WebSocket connection OPEN")
                     val createJson = JSONObject().apply {
                         put("type", "create_room")
                         put("room_code", roomCode)
@@ -213,13 +228,29 @@ class MediaProjectionService : Service() {
                     send(createJson.toString())
                 }
 
-                override fun onMessage(message: String?) {}
-                override fun onClose(code: Int, reason: String?, remote: Boolean) {}
-                override fun onError(ex: Exception?) {}
+                override fun onMessage(message: String?) {
+                    Log.d("AxeCast", "📩 WS Message: $message")
+                }
+                
+                override fun onClose(code: Int, reason: String?, remote: Boolean) {
+                    Log.w("AxeCast", "⚠️ WS Closed: $code, reason: $reason")
+                }
+                
+                override fun onError(ex: Exception?) {
+                    Log.e("AxeCast", "❌ WS Error: ${ex?.message}")
+                }
             }
+
+            // Secure TLS/WSS Socket Factory
+            if (cleanUrl.startsWith("wss://", ignoreCase = true)) {
+                val sslContext = SSLContext.getInstance("TLS")
+                sslContext.init(null, null, null)
+                webSocketClient?.setSocketFactory(sslContext.socketFactory)
+            }
+
             webSocketClient?.connect()
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("AxeCast", "Failed to initialize WebSocket: ${e.message}")
         }
     }
 

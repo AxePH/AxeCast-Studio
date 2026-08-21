@@ -32,6 +32,11 @@ release/
 *.dmg
 *.pkg
 *.exe
+.gradle/
+**/build/
+**/local.properties
+**/Pods/
+**/.cxx/
 
 # ==========================================
 # SQLite / Database Temporary Journal Files

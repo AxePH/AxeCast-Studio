@@ -335,11 +335,11 @@ class RemoteViewer(ctk.CTkToplevel):
     def _on_device_info(self, info: dict):
         def _update():
             name = info.get("model", info.get("name", "Unknown"))
+            ver = info.get("version", "v1.0.2")
             battery = info.get("battery", "—")
-            android_ver = info.get("android", "")
-            self.device_badge.configure(text=f"📱 {name}")
+            self.device_badge.configure(text=f"📱 {name} ({ver})")
             self.battery_badge.configure(text=f"🔋 {battery}%")
-            self.title(f"🌐 AxeCast Remote — {name} ({self.room_code})")
+            self.title(f"🌐 AxeCast Remote — {name} {ver} ({self.room_code})")
         self.after(0, _update)
     
     # ── Display Loop ──

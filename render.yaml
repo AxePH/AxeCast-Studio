@@ -1,8 +1,0 @@
-services:
-  - type: web
-    name: axecast-relay
-    runtime: python
-    region: singapore
-    plan: free
-    buildCommand: pip install -r server/requirements.txt
-    startCommand: python server/signaling_server.py

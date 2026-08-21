@@ -118,10 +118,24 @@ class RelayServer:
         finally:
             await self._handle_disconnect(websocket, role, room_code)
     
+    @staticmethod
+    def normalize_code(code: str) -> str:
+        """Strip hyphens, spaces and lowercase for fuzzy matching."""
+        if not code:
+            return ""
+        return str(code).replace("-", "").replace(" ", "").strip().upper()
+
     async def _handle_create_room(self, websocket, msg) -> str:
         """Publisher requests a new room."""
-        room_code = self.generate_room_code()
+        requested_code = msg.get("room_code", "").strip()
+        if requested_code:
+            room_code = self.normalize_code(requested_code)
+        else:
+            room_code = self.normalize_code(self.generate_room_code())
+            
+        pin = msg.get("pin") or f"{random.randint(1000, 9999)}"
         room = RoomSession(room_code, websocket)
+        room.pin = pin
         room.publisher_info = msg.get("device_info", {})
         self.rooms[room_code] = room
         
@@ -136,14 +150,19 @@ class RelayServer:
     
     async def _handle_join_room(self, websocket, msg) -> Optional[str]:
         """Subscriber joins an existing room by code."""
-        room_code = msg.get("room_code", "").strip()
+        raw_code = msg.get("room_code", "").strip()
+        room_code = self.normalize_code(raw_code)
         
         if room_code not in self.rooms:
-            await websocket.send(json.dumps({
-                "type": "error",
-                "message": f"Room '{room_code}' not found or expired."
-            }))
-            return None
+            # Fallback exact search
+            if raw_code in self.rooms:
+                room_code = raw_code
+            else:
+                await websocket.send(json.dumps({
+                    "type": "error",
+                    "message": f"Room '{raw_code}' not found or expired."
+                }))
+                return None
         
         room = self.rooms[room_code]
         

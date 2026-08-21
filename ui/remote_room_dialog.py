@@ -225,6 +225,11 @@ class RemoteRoomDialog(ctk.CTkToplevel):
             self.join_status.configure(text="⚠ Please enter a server URL", text_color="#ef4444")
             return
         
+        # Auto-start embedded relay server if connecting locally
+        if "localhost" in server or "127.0.0.1" in server or self._get_local_ip() in server:
+            from core.remote_session_manager import get_or_start_embedded_server
+            get_or_start_embedded_server()
+
         self.join_status.configure(text="⏳ Connecting...", text_color="#38bdf8")
         self.join_btn.configure(state="disabled")
         self.update()

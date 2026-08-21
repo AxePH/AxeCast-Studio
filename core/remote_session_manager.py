@@ -346,3 +346,15 @@ class EmbeddedRelayServer:
     @property
     def local_url(self) -> str:
         return f"ws://localhost:{self.port}"
+
+
+_SHARED_EMBEDDED_SERVER: Optional[EmbeddedRelayServer] = None
+
+def get_or_start_embedded_server(port: int = 9820) -> EmbeddedRelayServer:
+    """Returns or auto-starts the global embedded relay server instance."""
+    global _SHARED_EMBEDDED_SERVER
+    if _SHARED_EMBEDDED_SERVER is None or not _SHARED_EMBEDDED_SERVER.running:
+        _SHARED_EMBEDDED_SERVER = EmbeddedRelayServer(port=port)
+        _SHARED_EMBEDDED_SERVER.start()
+    return _SHARED_EMBEDDED_SERVER
+

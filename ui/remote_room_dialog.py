@@ -83,25 +83,71 @@ class RemoteRoomDialog(ctk.CTkToplevel):
         self.code_entry.pack()
         self.code_entry.bind("<Return>", lambda e: self._on_join_click())
         
-        # Server URL
+        # Server URL row with Preset & Paste Buttons
         server_frame = ctk.CTkFrame(tab, fg_color="transparent")
-        server_frame.pack(fill="x", padx=24, pady=(12, 4))
+        server_frame.pack(fill="x", padx=24, pady=(10, 2))
         
         ctk.CTkLabel(
             server_frame,
             text="Server:",
             font=ctk.CTkFont(size=12, weight="bold")
-        ).pack(side="left", padx=(0, 8))
+        ).pack(side="left", padx=(0, 6))
         
         self.server_entry = ctk.CTkEntry(
             server_frame,
-            placeholder_text="ws://localhost:9820",
-            width=300,
+            placeholder_text="wss://axecast-relay.onrender.com",
             height=32,
             font=ctk.CTkFont(size=12)
         )
-        self.server_entry.pack(side="left", fill="x", expand=True)
-        self.server_entry.insert(0, "ws://localhost:9820")
+        self.server_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.server_entry.insert(0, "wss://axecast-relay.onrender.com")
+        self._enable_clipboard_shortcuts(self.server_entry)
+        self._enable_clipboard_shortcuts(self.code_entry)
+        
+        paste_btn = ctk.CTkButton(
+            server_frame,
+            text="📋 Paste",
+            width=64,
+            height=32,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("#334155", "#1e293b"),
+            hover_color=("#475569", "#334155"),
+            command=self._paste_server_url
+        )
+        paste_btn.pack(side="right")
+
+        # Quick Server Presets Row
+        presets_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        presets_frame.pack(fill="x", padx=24, pady=(2, 6))
+        
+        ctk.CTkLabel(
+            presets_frame,
+            text="Presets:",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="#64748b"
+        ).pack(side="left", padx=(0, 4))
+
+        cloud_btn = ctk.CTkButton(
+            presets_frame,
+            text="☁️ Render Cloud (Global)",
+            height=22,
+            font=ctk.CTkFont(size=10),
+            fg_color=("#0369a1", "#0284c7"),
+            hover_color=("#0284c7", "#38bdf8"),
+            command=lambda: self._set_server_preset("wss://axecast-relay.onrender.com")
+        )
+        cloud_btn.pack(side="left", padx=2)
+
+        local_btn = ctk.CTkButton(
+            presets_frame,
+            text="🏠 Local (LAN)",
+            height=22,
+            font=ctk.CTkFont(size=10),
+            fg_color=("#334155", "#475569"),
+            hover_color=("#475569", "#64748b"),
+            command=lambda: self._set_server_preset("ws://localhost:9820")
+        )
+        local_btn.pack(side="left", padx=2)
         
         # Status
         self.join_status = ctk.CTkLabel(
@@ -296,6 +342,68 @@ class RemoteRoomDialog(ctk.CTkToplevel):
         except Exception:
             return "127.0.0.1"
     
+    def _enable_clipboard_shortcuts(self, entry):
+        """Enable standard macOS/Windows Cmd+V, Cmd+C, Cmd+A clipboard shortcuts on Entry widget."""
+        def on_paste(event=None):
+            try:
+                text = self.clipboard_get()
+                if text:
+                    try:
+                        sel_start = entry.index("sel.first")
+                        sel_end = entry.index("sel.last")
+                        entry.delete(sel_start, sel_end)
+                    except Exception:
+                        pass
+                    entry.insert(entry.index("insert"), text)
+                return "break"
+            except Exception:
+                pass
+
+        def on_copy(event=None):
+            try:
+                text = entry.selection_get()
+                self.clipboard_clear()
+                self.clipboard_append(text)
+                return "break"
+            except Exception:
+                pass
+
+        def on_select_all(event=None):
+            try:
+                entry.select_range(0, "end")
+                entry.icursor("end")
+                return "break"
+            except Exception:
+                pass
+
+        entry.bind("<Command-v>", on_paste)
+        entry.bind("<Command-V>", on_paste)
+        entry.bind("<Control-v>", on_paste)
+        entry.bind("<Control-V>", on_paste)
+        entry.bind("<Command-c>", on_copy)
+        entry.bind("<Command-C>", on_copy)
+        entry.bind("<Control-c>", on_copy)
+        entry.bind("<Control-C>", on_copy)
+        entry.bind("<Command-a>", on_select_all)
+        entry.bind("<Command-A>", on_select_all)
+        entry.bind("<Control-a>", on_select_all)
+        entry.bind("<Control-A>", on_select_all)
+
+    def _paste_server_url(self):
+        """Quick paste from clipboard button action."""
+        try:
+            text = self.clipboard_get().strip()
+            if text:
+                self.server_entry.delete(0, "end")
+                self.server_entry.insert(0, text)
+        except Exception:
+            pass
+
+    def _set_server_preset(self, url: str):
+        """Quick preset button action."""
+        self.server_entry.delete(0, "end")
+        self.server_entry.insert(0, url)
+
     def destroy(self):
         # Don't stop the embedded server on dialog close - it should keep running
         super().destroy()

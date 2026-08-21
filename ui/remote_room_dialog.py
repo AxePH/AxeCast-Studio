@@ -95,12 +95,12 @@ class RemoteRoomDialog(ctk.CTkToplevel):
         
         self.server_entry = ctk.CTkEntry(
             server_frame,
-            placeholder_text="wss://axecast-relay.onrender.com",
+            placeholder_text="ws://<server-ip>:9820",
             height=32,
             font=ctk.CTkFont(size=12)
         )
         self.server_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        self.server_entry.insert(0, "wss://axecast-relay.onrender.com")
+        self.server_entry.insert(0, "ws://localhost:9820")
         self._enable_clipboard_shortcuts(self.server_entry)
         self._enable_clipboard_shortcuts(self.code_entry)
         
@@ -122,25 +122,14 @@ class RemoteRoomDialog(ctk.CTkToplevel):
         
         ctk.CTkLabel(
             presets_frame,
-            text="Presets:",
+            text="Quick Presets:",
             font=ctk.CTkFont(size=10, weight="bold"),
             text_color="#64748b"
         ).pack(side="left", padx=(0, 4))
 
-        cloud_btn = ctk.CTkButton(
-            presets_frame,
-            text="☁️ Render Cloud (Global)",
-            height=22,
-            font=ctk.CTkFont(size=10),
-            fg_color=("#0369a1", "#0284c7"),
-            hover_color=("#0284c7", "#38bdf8"),
-            command=lambda: self._set_server_preset("wss://axecast-relay.onrender.com")
-        )
-        cloud_btn.pack(side="left", padx=2)
-
         local_btn = ctk.CTkButton(
             presets_frame,
-            text="🏠 Local (LAN)",
+            text="🏠 Local Default (ws://localhost:9820)",
             height=22,
             font=ctk.CTkFont(size=10),
             fg_color=("#334155", "#475569"),

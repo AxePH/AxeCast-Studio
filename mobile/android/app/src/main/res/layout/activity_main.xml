@@ -186,7 +186,7 @@
                 android:textSize="13sp"
                 android:paddingHorizontal="12dp"
                 android:layout_marginTop="4dp"
-                android:hint="ws://192.168.1.108:9820"
+                android:hint="ws://server-ip:9820 or wss://..."
                 android:textColorHint="#475569"
                 android:inputType="textUri"
                 android:singleLine="true" />

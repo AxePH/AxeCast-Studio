@@ -40,7 +40,7 @@ class MediaProjectionService : Service() {
     private val httpClients = CopyOnWriteArrayList<Socket>()
     private var isStreaming = false
     private var mode = "WIFI"
-    private var serverUrl = "ws://192.168.1.108:9820"
+    private var serverUrl = "ws://localhost:9820"
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -54,7 +54,7 @@ class MediaProjectionService : Service() {
         val dataIntent = intent?.getParcelableExtra<Intent>("DATA_INTENT")
         mode = intent?.getStringExtra("MODE") ?: "WIFI"
         val roomCode = intent?.getStringExtra("ROOM_CODE") ?: ""
-        serverUrl = intent?.getStringExtra("SERVER_URL") ?: "ws://192.168.1.108:9820"
+        serverUrl = intent?.getStringExtra("SERVER_URL") ?: "ws://localhost:9820"
 
         val title = if (mode == "WIFI") "AxeCast Local Wi-Fi Stream" else "AxeCast Remote Room ($roomCode)"
         val notification = createNotification(title)

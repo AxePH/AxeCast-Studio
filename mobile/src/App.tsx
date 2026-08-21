@@ -18,7 +18,7 @@ export default function App() {
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [roomCode, setRoomCode] = useState('--- ---');
   const [pin, setPin] = useState('----');
-  const [serverUrl, setServerUrl] = useState('ws://192.168.1.108:9820');
+  const [serverUrl, setServerUrl] = useState('');
   const [viewersCount, setViewersCount] = useState(0);
   const [logs, setLogs] = useState<string[]>([]);
   const [localIp, setLocalIp] = useState('192.168.1.xxx');
@@ -133,7 +133,7 @@ export default function App() {
               value={serverUrl}
               onChangeText={setServerUrl}
               editable={!isBroadcasting}
-              placeholder="ws://192.168.1.108:9820"
+              placeholder="ws://<server-ip>:9820 หรือ wss://..."
               placeholderTextColor="#475569"
               autoCapitalize="none"
               autoCorrect={false}

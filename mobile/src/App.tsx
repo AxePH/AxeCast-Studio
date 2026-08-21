@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   Text,
@@ -7,18 +7,21 @@ import {
   ScrollView,
   StatusBar,
   SafeAreaView,
+  TextInput,
   Share,
 } from 'react-native';
 
 const APP_VERSION = 'v1.0.2';
 
 export default function App() {
+  const [activeMode, setActiveMode] = useState<'WIFI' | 'REMOTE'>('WIFI');
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [roomCode, setRoomCode] = useState('--- ---');
   const [pin, setPin] = useState('----');
+  const [serverUrl, setServerUrl] = useState('ws://192.168.1.108:9820');
   const [viewersCount, setViewersCount] = useState(0);
   const [logs, setLogs] = useState<string[]>([]);
-  const [serverStatus, setServerStatus] = useState('Ready');
+  const [localIp, setLocalIp] = useState('192.168.1.xxx');
 
   const generateRoomCode = () => {
     const c1 = Math.floor(100 + Math.random() * 900);
@@ -29,18 +32,22 @@ export default function App() {
 
   const toggleBroadcast = () => {
     if (!isBroadcasting) {
-      const { code, pin: p } = generateRoomCode();
-      setRoomCode(code);
-      setPin(p);
-      setIsBroadcasting(true);
-      setServerStatus('Streaming to Room');
-      addLog(`[${new Date().toLocaleTimeString()}] 🔴 Started Screen Broadcast`);
-      addLog(`[${new Date().toLocaleTimeString()}] 🔑 Room Code: ${code} | PIN: ${p}`);
+      if (activeMode === 'REMOTE') {
+        const { code, pin: p } = generateRoomCode();
+        setRoomCode(code);
+        setPin(p);
+        setIsBroadcasting(true);
+        addLog(`[${new Date().toLocaleTimeString()}] 🔴 Started Remote Broadcast (Room ${code})`);
+        addLog(`[${new Date().toLocaleTimeString()}] 📡 Server: ${serverUrl}`);
+      } else {
+        setIsBroadcasting(true);
+        addLog(`[${new Date().toLocaleTimeString()}] 📶 Started Local Wi-Fi Stream`);
+        addLog(`[${new Date().toLocaleTimeString()}] 🌐 URL: http://${localIp}:8080/stream`);
+      }
     } else {
       setIsBroadcasting(false);
-      setServerStatus('Ready');
       setViewersCount(0);
-      addLog(`[${new Date().toLocaleTimeString()}] ⏹ Stopped Broadcast`);
+      addLog(`[${new Date().toLocaleTimeString()}] ⏹ Stopped Streaming`);
     }
   };
 
@@ -71,18 +78,69 @@ export default function App() {
         </View>
       </View>
 
-      {/* Room Display Card */}
-      <View style={styles.card}>
-        <Text style={styles.cardSubtitle}>YOUR 6-DIGIT ROOM CODE</Text>
-        <Text style={styles.roomCodeText}>{roomCode}</Text>
-        <Text style={styles.pinText}>PIN: {pin}</Text>
+      {/* Mode Selector Segmented Tabs */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity
+          style={[styles.tabBtn, activeMode === 'WIFI' && styles.tabActiveWifi]}
+          disabled={isBroadcasting}
+          onPress={() => setActiveMode('WIFI')}
+        >
+          <Text style={[styles.tabText, activeMode === 'WIFI' && styles.tabTextActive]}>
+            📶 Local Wi-Fi
+          </Text>
+        </TouchableOpacity>
 
-        {isBroadcasting && (
-          <TouchableOpacity style={styles.shareBtn} onPress={shareRoomCode}>
-            <Text style={styles.shareBtnText}>📋 Share Code with Team</Text>
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity
+          style={[styles.tabBtn, activeMode === 'REMOTE' && styles.tabActiveRemote]}
+          disabled={isBroadcasting}
+          onPress={() => setActiveMode('REMOTE')}
+        >
+          <Text style={[styles.tabText, activeMode === 'REMOTE' && styles.tabTextActive]}>
+            🌐 Remote Room
+          </Text>
+        </TouchableOpacity>
       </View>
+
+      {/* Tab 1: Local Wi-Fi Mode Card */}
+      {activeMode === 'WIFI' && (
+        <View style={styles.card}>
+          <Text style={styles.cardSubtitle}>LOCAL WI-FI STREAM URL</Text>
+          <Text style={styles.wifiUrlText}>http://{localIp}:8080/stream</Text>
+          <Text style={styles.statusSubtext}>
+            {isBroadcasting ? '🟢 Streaming on Local Wi-Fi' : '⚫ Ready to stream in same network'}
+          </Text>
+        </View>
+      )}
+
+      {/* Tab 2: Remote Room Mode Card */}
+      {activeMode === 'REMOTE' && (
+        <View style={styles.card}>
+          <Text style={styles.cardSubtitle}>YOUR 6-DIGIT ROOM CODE</Text>
+          <Text style={styles.roomCodeText}>{roomCode}</Text>
+          <Text style={styles.pinText}>PIN: {pin}</Text>
+
+          {isBroadcasting && (
+            <TouchableOpacity style={styles.shareBtn} onPress={shareRoomCode}>
+              <Text style={styles.shareBtnText}>📋 Share Code with Team</Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Server URL Input */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>📡 Relay Server URL:</Text>
+            <TextInput
+              style={styles.textInput}
+              value={serverUrl}
+              onChangeText={setServerUrl}
+              editable={!isBroadcasting}
+              placeholder="ws://192.168.1.108:9820"
+              placeholderTextColor="#475569"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+          </View>
+        </View>
+      )}
 
       {/* Status Badges */}
       <View style={styles.statusRow}>
@@ -102,13 +160,17 @@ export default function App() {
         </View>
       </View>
 
-      {/* Big Action Button */}
+      {/* Action Button */}
       <TouchableOpacity
         style={[styles.mainBtn, isBroadcasting ? styles.btnStop : styles.btnStart]}
         onPress={toggleBroadcast}
       >
         <Text style={styles.mainBtnText}>
-          {isBroadcasting ? '⏹ Stop Broadcast' : '🔴 Start Broadcast'}
+          {isBroadcasting
+            ? '⏹ Stop Streaming'
+            : activeMode === 'WIFI'
+            ? '📶 Start Wi-Fi Stream'
+            : '🔴 Start Remote Broadcast'}
         </Text>
       </TouchableOpacity>
 
@@ -122,7 +184,7 @@ export default function App() {
         </View>
         <ScrollView style={styles.logsScroll}>
           {logs.length === 0 ? (
-            <Text style={styles.emptyLogs}>No logs yet. Tap Start Broadcast to begin.</Text>
+            <Text style={styles.emptyLogs}>No logs yet. Tap Start to begin streaming.</Text>
           ) : (
             logs.map((log, index) => (
               <Text key={index} style={styles.logLine}>
@@ -134,7 +196,7 @@ export default function App() {
       </View>
 
       {/* Footer */}
-      <Text style={styles.footerText}>AxeCast Mobile Companion Suite • {APP_VERSION}</Text>
+      <Text style={styles.footerText}>AxeCast Dual-Mode Companion Suite • {APP_VERSION}</Text>
     </SafeAreaView>
   );
 }
@@ -149,8 +211,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
-    paddingHorizontal: 8,
+    marginBottom: 12,
+    paddingHorizontal: 4,
   },
   title: {
     fontSize: 22,
@@ -168,68 +230,126 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: 'bold',
   },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#1e293b',
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 14,
+  },
+  tabBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 8,
+  },
+  tabActiveWifi: {
+    backgroundColor: '#0284c7',
+  },
+  tabActiveRemote: {
+    backgroundColor: '#7c3aed',
+  },
+  tabText: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  tabTextActive: {
+    color: '#ffffff',
+  },
   card: {
     backgroundColor: '#1e293b',
-    borderRadius: 16,
-    padding: 20,
+    borderRadius: 14,
+    padding: 18,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#334155',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   cardSubtitle: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
     letterSpacing: 1,
-    marginBottom: 8,
+    marginBottom: 6,
+  },
+  wifiUrlText: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#38bdf8',
+    marginVertical: 6,
+  },
+  statusSubtext: {
+    color: '#f59e0b',
+    fontSize: 12,
+    marginTop: 4,
   },
   roomCodeText: {
-    fontSize: 38,
+    fontSize: 36,
     fontWeight: 'bold',
     color: '#ffffff',
-    letterSpacing: 4,
+    letterSpacing: 3,
   },
   pinText: {
     fontSize: 14,
     color: '#38bdf8',
     fontWeight: 'bold',
-    marginTop: 4,
+    marginTop: 2,
   },
   shareBtn: {
-    marginTop: 12,
+    marginTop: 10,
     backgroundColor: '#0284c7',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     borderRadius: 8,
   },
   shareBtnText: {
     color: '#ffffff',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 'bold',
+  },
+  inputGroup: {
+    width: '100%',
+    marginTop: 12,
+  },
+  inputLabel: {
+    color: '#94a3b8',
+    fontSize: 11,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  textInput: {
+    backgroundColor: '#0f172a',
+    borderRadius: 8,
+    height: 40,
+    paddingHorizontal: 12,
+    color: '#ffffff',
+    fontSize: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
   },
   statusRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   badge: {
     flex: 1,
     backgroundColor: '#0f172a',
-    padding: 10,
+    padding: 8,
     borderRadius: 8,
-    marginHorizontal: 4,
+    marginHorizontal: 3,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#1e293b',
   },
   badgeLabel: {
     color: '#64748b',
-    fontSize: 11,
+    fontSize: 10,
   },
   badgeVal: {
     color: '#e2e8f0',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 'bold',
     marginTop: 2,
   },
@@ -240,11 +360,11 @@ const styles = StyleSheet.create({
     color: '#f59e0b',
   },
   mainBtn: {
-    height: 52,
-    borderRadius: 12,
+    height: 50,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   btnStart: {
     backgroundColor: '#16a34a',
@@ -254,14 +374,14 @@ const styles = StyleSheet.create({
   },
   mainBtnText: {
     color: '#ffffff',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
   },
   logsContainer: {
     flex: 1,
     backgroundColor: '#0f172a',
-    borderRadius: 12,
-    padding: 12,
+    borderRadius: 10,
+    padding: 10,
     borderWidth: 1,
     borderColor: '#1e293b',
   },
@@ -269,37 +389,37 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   logsTitle: {
     color: '#38bdf8',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 'bold',
   },
   clearText: {
     color: '#64748b',
-    fontSize: 12,
+    fontSize: 11,
   },
   logsScroll: {
     flex: 1,
   },
   emptyLogs: {
     color: '#475569',
-    fontSize: 12,
+    fontSize: 11,
     fontStyle: 'italic',
     textAlign: 'center',
-    marginTop: 20,
+    marginTop: 16,
   },
   logLine: {
     color: '#94a3b8',
     fontFamily: 'monospace',
-    fontSize: 11,
-    marginBottom: 4,
+    fontSize: 10,
+    marginBottom: 3,
   },
   footerText: {
     color: '#475569',
-    fontSize: 11,
+    fontSize: 10,
     textAlign: 'center',
-    marginTop: 12,
+    marginTop: 8,
   },
 });

@@ -157,21 +157,28 @@ class RemoteSessionManager:
 
         # WebRTC & Real-time Speedometer
         self.pc = None
-        self.is_p2p: bool = False
-        self.speed_mbps: float = 0.0
-        self.speed_kbps: float = 0.0
-        self.bytes_received: int = 0
-        self._window_bytes: int = 0
+        self.speed_mbps = 0.0
+        self.speed_kbps = 0.0
+        self._last_fps_time = 0.0
+        self._fps_frame_count = 0
+        self._total_bytes_received = 0
+        self._window_bytes = 0
         self._last_speed_time: float = time.time()
+        
+        # Lock for thread-safety
+        self._frame_lock = threading.Lock()
+        self._latest_frame: Optional[Image.Image] = None
 
     def _record_bytes(self, num_bytes: int):
-        self.bytes_received += num_bytes
+        """Accumulate bytes for real-time throughput calculation."""
+        self._total_bytes_received += num_bytes
         self._window_bytes += num_bytes
         now = time.time()
         elapsed = now - self._last_speed_time
-        if elapsed >= 0.7:
-            self.speed_kbps = (self._window_bytes / 1024.0) / elapsed
-            self.speed_mbps = ((self._window_bytes * 8.0) / (1024.0 * 1024.0)) / elapsed
+        if elapsed >= 0.5:
+            bps = (self._window_bytes * 8) / elapsed
+            self.speed_mbps = bps / 1_000_000
+            self.speed_kbps = (self._window_bytes / 1024) / elapsed
             self._window_bytes = 0
             self._last_speed_time = now
     
@@ -181,7 +188,9 @@ class RemoteSessionManager:
                 on_status: Optional[Callable] = None,
                 on_device_info: Optional[Callable] = None,
                 on_packages: Optional[Callable] = None,
-                on_active_app: Optional[Callable] = None):
+                on_active_app: Optional[Callable] = None,
+                on_shell_output: Optional[Callable] = None,
+                on_shell_done: Optional[Callable] = None):
         """
         Connect to a remote session room (non-blocking, runs in background thread).
         """
@@ -205,6 +214,8 @@ class RemoteSessionManager:
         self._on_device_info = on_device_info
         self._on_packages = on_packages
         self._on_active_app = on_active_app
+        self._on_shell_output = on_shell_output
+        self._on_shell_done = on_shell_done
         self._stop_event.clear()
         
         self._thread = threading.Thread(target=self._run_async_loop, daemon=True)
@@ -214,6 +225,7 @@ class RemoteSessionManager:
         """Disconnect from the remote session."""
         self._stop_event.set()
         self.connected = False
+        self._data_channel = None
         
         if self._loop and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._loop.stop)
@@ -245,6 +257,17 @@ class RemoteSessionManager:
             "type": "button",
             "button": button
         })
+        
+    def send_shell_command(self, command: str, cmd_id: Optional[str] = None) -> str:
+        """Send shell command to remote device for execution."""
+        if not cmd_id:
+            cmd_id = f"cmd_{int(time.time() * 1000)}"
+        self._send_msg({
+            "type": "shell_exec",
+            "id": cmd_id,
+            "command": command
+        })
+        return cmd_id
     
     def _send_msg(self, data: dict):
         """Thread-safe message send."""
@@ -257,6 +280,12 @@ class RemoteSessionManager:
             pass
     
     async def _async_send(self, raw: str):
+        if self._data_channel and getattr(self._data_channel, "readyState", "") == "open":
+            try:
+                self._data_channel.send(raw)
+                return
+            except Exception:
+                pass
         if self.ws:
             try:
                 await self.ws.send(raw)
@@ -362,6 +391,19 @@ class RemoteSessionManager:
                 pkg = msg.get("package", "")
                 if self._on_active_app and pkg:
                     self._on_active_app(pkg)
+            
+            elif msg_type == "shell_output":
+                cmd_id = msg.get("id", "")
+                text = msg.get("text", "")
+                is_err = msg.get("is_err", False)
+                if self._on_shell_output:
+                    self._on_shell_output(cmd_id, text, is_err)
+                    
+            elif msg_type == "shell_done":
+                cmd_id = msg.get("id", "")
+                exit_code = msg.get("exit_code", 0)
+                if self._on_shell_done:
+                    self._on_shell_done(cmd_id, exit_code)
             
             elif msg_type == "webrtc_offer":
                 logger.debug("Received WebRTC offer in websocket loop!")
@@ -523,6 +565,7 @@ class RemoteSessionManager:
             @self.pc.on("datachannel")
             def on_datachannel(channel):
                 logger.debug("Datachannel created")
+                self._data_channel = channel
                 @channel.on("message")
                 def on_msg(message):
                     self._record_bytes(len(message) if isinstance(message, (str, bytes)) else 64)
@@ -543,6 +586,17 @@ class RemoteSessionManager:
                             pkg = data.get("package", "")
                             if self._on_active_app and pkg:
                                 self._on_active_app(pkg)
+                        elif m_type == "shell_output":
+                            cmd_id = data.get("id", "")
+                            text = data.get("text", "")
+                            is_err = data.get("is_err", False)
+                            if self._on_shell_output:
+                                self._on_shell_output(cmd_id, text, is_err)
+                        elif m_type == "shell_done":
+                            cmd_id = data.get("id", "")
+                            exit_code = data.get("exit_code", 0)
+                            if self._on_shell_done:
+                                self._on_shell_done(cmd_id, exit_code)
                     except Exception:
                         pass
 

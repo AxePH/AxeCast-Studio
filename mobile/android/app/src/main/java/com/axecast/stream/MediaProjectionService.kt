@@ -521,7 +521,23 @@ class MediaProjectionService : Service() {
                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
                 override fun onAddStream(stream: MediaStream?) {}
                 override fun onRemoveStream(stream: MediaStream?) {}
-                override fun onDataChannel(dc: DataChannel?) {}
+                override fun onDataChannel(dc: DataChannel?) {
+                    Log.i("AxeCast", "⚡ Received remote DataChannel: ${dc?.label()}")
+                    dc?.registerObserver(object : DataChannel.Observer {
+                        override fun onBufferedAmountChange(p0: Long) {}
+                        override fun onStateChange() {
+                            Log.i("AxeCast", "⚡ Remote DataChannel State: ${dc.state()}")
+                        }
+                        override fun onMessage(buffer: DataChannel.Buffer?) {
+                            if (buffer != null) {
+                                val bytes = ByteArray(buffer.data.remaining())
+                                buffer.data.get(bytes)
+                                val text = String(bytes, Charsets.UTF_8)
+                                handleIncomingControlMessage(text)
+                            }
+                        }
+                    })
+                }
                 override fun onRenegotiationNeeded() {}
                 override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {}
             })
@@ -529,6 +545,20 @@ class MediaProjectionService : Service() {
             val dcInit = DataChannel.Init()
             dcInit.ordered = true
             dataChannel = peerConnection?.createDataChannel("data", dcInit)
+            dataChannel?.registerObserver(object : DataChannel.Observer {
+                override fun onBufferedAmountChange(p0: Long) {}
+                override fun onStateChange() {
+                    Log.i("AxeCast", "⚡ WebRTC DataChannel State: ${dataChannel?.state()}")
+                }
+                override fun onMessage(buffer: DataChannel.Buffer?) {
+                    if (buffer != null) {
+                        val bytes = ByteArray(buffer.data.remaining())
+                        buffer.data.get(bytes)
+                        val text = String(bytes, Charsets.UTF_8)
+                        handleIncomingControlMessage(text)
+                    }
+                }
+            })
             
             if (videoTrack != null) {
                 peerConnection?.addTrack(videoTrack)
@@ -721,6 +751,107 @@ class MediaProjectionService : Service() {
         }, backgroundHandler)
     }
 
+    private fun handleShellCommand(cmdId: String, command: String) {
+        Thread {
+            try {
+                Log.i("AxeCast", "🖥️ Executing remote shell command: $command")
+                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
+                
+                // Read stdout
+                Thread {
+                    try {
+                        val reader = BufferedReader(InputStreamReader(process.inputStream))
+                        while (true) {
+                            val line = reader.readLine() ?: break
+                            sendShellOutput(cmdId, line, false)
+                        }
+                    } catch (ignored: Exception) {}
+                }.start()
+                
+                // Read stderr
+                Thread {
+                    try {
+                        val errReader = BufferedReader(InputStreamReader(process.errorStream))
+                        while (true) {
+                            val line = errReader.readLine() ?: break
+                            sendShellOutput(cmdId, line, true)
+                        }
+                    } catch (ignored: Exception) {}
+                }.start()
+                
+                val exitCode = process.waitFor()
+                sendShellDone(cmdId, exitCode)
+                Log.i("AxeCast", "🏁 Remote shell command done (code $exitCode): $command")
+            } catch (e: Exception) {
+                Log.e("AxeCast", "Error executing shell: ${e.message}")
+                sendShellOutput(cmdId, "Error: ${e.message}", true)
+                sendShellDone(cmdId, -1)
+            }
+        }.start()
+    }
+
+    private fun sendShellOutput(cmdId: String, text: String, isErr: Boolean) {
+        val json = JSONObject().apply {
+            put("type", "shell_output")
+            put("id", cmdId)
+            put("text", text)
+            put("is_err", isErr)
+        }
+        sendControlMessage(json.toString())
+    }
+
+    private fun sendShellDone(cmdId: String, exitCode: Int) {
+        val json = JSONObject().apply {
+            put("type", "shell_done")
+            put("id", cmdId)
+            put("exit_code", exitCode)
+        }
+        sendControlMessage(json.toString())
+    }
+
+    private fun sendControlMessage(msg: String) {
+        if (dataChannel?.state() == DataChannel.State.OPEN) {
+            val buffer = DataChannel.Buffer(ByteBuffer.wrap(msg.toByteArray()), false)
+            dataChannel?.send(buffer)
+        } else if (webSocketClient?.isOpen == true) {
+            webSocketClient?.send(msg)
+        }
+    }
+
+    private fun handleIncomingControlMessage(message: String) {
+        try {
+            val json = JSONObject(message)
+            val msgType = json.optString("type")
+            if (msgType == "shell_exec") {
+                val cmdId = json.optString("id", System.currentTimeMillis().toString())
+                val cmd = json.optString("command", "")
+                if (cmd.isNotEmpty()) {
+                    handleShellCommand(cmdId, cmd)
+                }
+            } else if (msgType == "button") {
+                val action = json.optString("action")
+                handleRemoteButton(action)
+            } else if (msgType == "webrtc_answer") {
+                val sdp = json.optString("sdp")
+                if (sdp.isNotEmpty()) {
+                    handleWebRtcAnswer(sdp)
+                }
+            } else if (msgType == "webrtc_ice") {
+                val candidate = json.optJSONObject("candidate")
+                if (candidate != null) {
+                    handleWebRtcIce(candidate)
+                }
+            } else if (msgType == "request_offer") {
+                Log.i("AxeCast", "👤 Viewer requested offer -> creating & sending WebRTC offer")
+                Handler(Looper.getMainLooper()).post {
+                    createAndSendOffer()
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AxeCast", "Error in handleIncomingControlMessage: ${e.message}")
+        }
+    }
+
     private fun connectWebSocket(roomCode: String, rawUrl: String) {
         var cleanUrl = rawUrl.trim()
         if (cleanUrl.startsWith("https://", ignoreCase = true)) {
@@ -766,8 +897,9 @@ class MediaProjectionService : Service() {
                 }
 
                 override fun onMessage(message: String?) {
+                    if (message == null) return
                     try {
-                        val json = JSONObject(message ?: "")
+                        val json = JSONObject(message)
                         val msgType = json.optString("type")
                         if (msgType == "room_created") {
                             val serverAssigned = json.optString("room_code", "")
@@ -784,24 +916,8 @@ class MediaProjectionService : Service() {
                             Handler(Looper.getMainLooper()).post {
                                 createAndSendOffer()
                             }
-                        } else if (msgType == "request_offer") {
-                            Log.i("AxeCast", "👤 Viewer requested offer -> creating & sending WebRTC offer")
-                            Handler(Looper.getMainLooper()).post {
-                                createAndSendOffer()
-                            }
-                        } else if (msgType == "webrtc_answer") {
-                            val sdp = json.optString("sdp")
-                            if (sdp.isNotEmpty()) {
-                                handleWebRtcAnswer(sdp)
-                            }
-                        } else if (msgType == "webrtc_ice") {
-                            val candidate = json.optJSONObject("candidate")
-                            if (candidate != null) {
-                                handleWebRtcIce(candidate)
-                            }
-                        } else if (msgType == "button") {
-                            val action = json.optString("action")
-                            handleRemoteButton(action)
+                        } else {
+                            handleIncomingControlMessage(message)
                         }
                     } catch (e: Exception) {
                         Log.e("AxeCast", "Error in onMessage: ${e.message}")

@@ -263,33 +263,69 @@ class RemoteViewer(ctk.CTkToplevel):
         except Exception:
             pass
 
-    # ── Right Pane: Log Viewer ──
+    # ── Right Pane: Dual Mode (Live Logs & Remote Terminal) ──
     def _build_log_pane(self):
-        self.log_frame = ctk.CTkFrame(self.main_pane, width=480, fg_color=("#1e293b", "#0f172a"), corner_radius=10)
+        self.log_frame = ctk.CTkFrame(self.main_pane, width=500, fg_color=("#1e293b", "#0f172a"), corner_radius=10)
         self.log_frame.pack(side="right", fill="both", padx=(0, 0))
         self.log_frame.pack_propagate(False)
         
+        # Dual-tab switcher
+        tab_bar = ctk.CTkFrame(self.log_frame, height=38, fg_color="transparent")
+        tab_bar.pack(fill="x", padx=8, pady=(8, 4))
+        
+        self.right_tab_seg = ctk.CTkSegmentedButton(
+            tab_bar,
+            values=["📜 Live Logs", "💻 Remote Terminal"],
+            height=30,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            selected_color=("#0284c7", "#0369a1"),
+            selected_hover_color=("#0369a1", "#0284c7"),
+            command=self._on_right_tab_changed
+        )
+        self.right_tab_seg.set("📜 Live Logs")
+        self.right_tab_seg.pack(side="left", fill="x", expand=True)
+
+        # Subframes for tabs
+        self.log_subframe = ctk.CTkFrame(self.log_frame, fg_color="transparent")
+        self.term_subframe = ctk.CTkFrame(self.log_frame, fg_color="transparent")
+
+        self._build_live_logs_view(self.log_subframe)
+        self._build_terminal_view(self.term_subframe)
+
+        # Show Live Logs by default
+        self.log_subframe.pack(fill="both", expand=True)
+
+    def _on_right_tab_changed(self, value: str):
+        if value == "📜 Live Logs":
+            self.term_subframe.pack_forget()
+            self.log_subframe.pack(fill="both", expand=True)
+        else:
+            self.log_subframe.pack_forget()
+            self.term_subframe.pack(fill="both", expand=True)
+            self.after(50, lambda: self.term_entry.focus_set())
+
+    def _build_live_logs_view(self, parent):
         # Log header
-        log_header = ctk.CTkFrame(self.log_frame, height=36, fg_color="transparent")
-        log_header.pack(fill="x", padx=8, pady=(8, 4))
+        log_header = ctk.CTkFrame(parent, height=32, fg_color="transparent")
+        log_header.pack(fill="x", padx=8, pady=(2, 4))
         
         ctk.CTkLabel(
             log_header,
-            text="📜 Live Logs",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color="#38bdf8"
+            text="Real-Time Logcat Stream",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#94a3b8"
         ).pack(side="left")
         
         self.log_count_label = ctk.CTkLabel(
             log_header,
-            text="0",
+            text="0 lines",
             font=ctk.CTkFont(size=11),
             text_color="#94a3b8"
         )
         self.log_count_label.pack(side="right")
         
         # Search bar & Clear
-        search_frame = ctk.CTkFrame(self.log_frame, fg_color="transparent")
+        search_frame = ctk.CTkFrame(parent, fg_color="transparent")
         search_frame.pack(fill="x", padx=8, pady=(0, 4))
         
         self.log_search_entry = ctk.CTkEntry(
@@ -314,7 +350,7 @@ class RemoteViewer(ctk.CTkToplevel):
         clear_btn.pack(side="right")
         
         # Package / App selector row
-        pkg_frame = ctk.CTkFrame(self.log_frame, fg_color="transparent")
+        pkg_frame = ctk.CTkFrame(parent, fg_color="transparent")
         pkg_frame.pack(fill="x", padx=8, pady=(0, 4))
         
         ctk.CTkLabel(pkg_frame, text="📦 App:", font=ctk.CTkFont(size=11, weight="bold"), text_color="#94a3b8").pack(side="left", padx=(0, 4))
@@ -348,7 +384,7 @@ class RemoteViewer(ctk.CTkToplevel):
         self.active_app_btn.pack(side="right")
         
         # Log level filter badges
-        filter_frame = ctk.CTkFrame(self.log_frame, fg_color="transparent")
+        filter_frame = ctk.CTkFrame(parent, fg_color="transparent")
         filter_frame.pack(fill="x", padx=8, pady=(0, 4))
         
         self._filter_btns = {}
@@ -377,7 +413,7 @@ class RemoteViewer(ctk.CTkToplevel):
         
         # Log text area
         self.log_textbox = ctk.CTkTextbox(
-            self.log_frame,
+            parent,
             font=ctk.CTkFont(family="Menlo, Consolas, monospace", size=11),
             fg_color=("#0f172a", "#050a14"),
             text_color="#e2e8f0",
@@ -396,7 +432,7 @@ class RemoteViewer(ctk.CTkToplevel):
         self.log_textbox.tag_config("F", foreground="#dc2626")
         
         # Bottom: Export + Auto-scroll toggle
-        log_bottom = ctk.CTkFrame(self.log_frame, height=32, fg_color="transparent")
+        log_bottom = ctk.CTkFrame(parent, height=32, fg_color="transparent")
         log_bottom.pack(fill="x", padx=8, pady=(0, 6))
         
         self.autoscroll_var = ctk.BooleanVar(value=True)
@@ -424,6 +460,208 @@ class RemoteViewer(ctk.CTkToplevel):
         
         # Setup copy shortcuts & right click menu
         self._setup_log_interactions()
+
+    def _build_terminal_view(self, parent):
+        """Build interactive remote terminal & online debugging console."""
+        self._term_history = []
+        self._term_history_idx = 0
+
+        # Quick actions / shortcuts toolbar
+        tools_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        tools_frame.pack(fill="x", padx=8, pady=(2, 4))
+
+        quick_cmds = [
+            ("🔋 Battery", "dumpsys battery"),
+            ("📱 Specs", "getprop ro.product.model; getprop ro.build.version.release"),
+            ("📦 Apps", "pm list packages -3"),
+            ("💾 Disk", "df -h /data"),
+            ("⚡ Focus", "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"),
+            ("🧹 Clear", "__CLEAR__")
+        ]
+
+        for label, cmd in quick_cmds:
+            if cmd == "__CLEAR__":
+                btn = ctk.CTkButton(
+                    tools_frame,
+                    text=label,
+                    width=54,
+                    height=24,
+                    font=ctk.CTkFont(size=10, weight="bold"),
+                    fg_color=("#dc2626", "#991b1b"),
+                    hover_color=("#b91c1c", "#7f1d1d"),
+                    command=self._clear_terminal
+                )
+            else:
+                btn = ctk.CTkButton(
+                    tools_frame,
+                    text=label,
+                    width=68,
+                    height=24,
+                    font=ctk.CTkFont(size=10, weight="bold"),
+                    fg_color=("#334155", "#1e293b"),
+                    hover_color=("#475569", "#334155"),
+                    command=lambda c=cmd: self._execute_terminal_command(cmd_override=c)
+                )
+            btn.pack(side="left", padx=2)
+
+        # Terminal text area
+        self.term_textbox = ctk.CTkTextbox(
+            parent,
+            font=ctk.CTkFont(family="Menlo, Consolas, monospace", size=11),
+            fg_color=("#090d16", "#050811"),
+            text_color="#e2e8f0",
+            corner_radius=6,
+            wrap="char"
+        )
+        self.term_textbox.pack(fill="both", expand=True, padx=8, pady=(0, 4))
+        
+        # Tags for styling terminal output
+        self.term_textbox.tag_config("prompt", foreground="#38bdf8", font=ctk.CTkFont(family="Menlo, Consolas, monospace", size=11, weight="bold"))
+        self.term_textbox.tag_config("stdout", foreground="#f8fafc")
+        self.term_textbox.tag_config("stderr", foreground="#f87171")
+        self.term_textbox.tag_config("done_ok", foreground="#4ade80")
+        self.term_textbox.tag_config("done_err", foreground="#ef4444")
+        self.term_textbox.tag_config("info", foreground="#fbbf24")
+
+        # Welcome banner
+        self.term_textbox.insert("end", "╔════════════════════════════════════════════════════════════╗\n", "info")
+        self.term_textbox.insert("end", "║  💻 AxeCast Remote Interactive Terminal & ADB Shell        ║\n", "info")
+        self.term_textbox.insert("end", "║  P2P Direct Execution via WebRTC DataChannel               ║\n", "info")
+        self.term_textbox.insert("end", "╚════════════════════════════════════════════════════════════╝\n\n", "info")
+        self.term_textbox.configure(state="disabled")
+
+        # Command input bar
+        cmd_bar = ctk.CTkFrame(parent, height=36, fg_color="transparent")
+        cmd_bar.pack(fill="x", padx=8, pady=(0, 4))
+
+        prompt_lbl = ctk.CTkLabel(
+            cmd_bar,
+            text="shell:~$",
+            font=ctk.CTkFont(family="Menlo, Consolas, monospace", size=11, weight="bold"),
+            text_color="#38bdf8"
+        )
+        prompt_lbl.pack(side="left", padx=(0, 4))
+
+        self.term_entry = ctk.CTkEntry(
+            cmd_bar,
+            placeholder_text="Enter shell / adb command (e.g. pm list packages)",
+            height=32,
+            font=ctk.CTkFont(family="Menlo, Consolas, monospace", size=11)
+        )
+        self.term_entry.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.term_entry.bind("<Return>", lambda e: self._execute_terminal_command())
+        self.term_entry.bind("<Up>", self._on_term_history_up)
+        self.term_entry.bind("<Down>", self._on_term_history_down)
+
+        self.term_run_btn = ctk.CTkButton(
+            cmd_bar,
+            text="▶ Run",
+            width=64,
+            height=32,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("#16a34a", "#15803d"),
+            hover_color=("#15803d", "#166534"),
+            command=self._execute_terminal_command
+        )
+        self.term_run_btn.pack(side="right")
+
+        # Bottom options (Auto-scroll)
+        term_bottom = ctk.CTkFrame(parent, height=24, fg_color="transparent")
+        term_bottom.pack(fill="x", padx=8, pady=(0, 6))
+
+        self.term_autoscroll_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(
+            term_bottom,
+            text="Auto-scroll",
+            variable=self.term_autoscroll_var,
+            font=ctk.CTkFont(size=10),
+            height=20,
+            checkbox_width=16,
+            checkbox_height=16
+        ).pack(side="left")
+
+        ctk.CTkLabel(
+            term_bottom,
+            text="💡 Tip: Use Up/Down arrow keys for command history",
+            font=ctk.CTkFont(size=10),
+            text_color="#64748b"
+        ).pack(side="right")
+
+    def _clear_terminal(self):
+        self.term_textbox.configure(state="normal")
+        self.term_textbox.delete("1.0", "end")
+        self.term_textbox.configure(state="disabled")
+
+    def _execute_terminal_command(self, event=None, cmd_override=None):
+        cmd = cmd_override if cmd_override is not None else self.term_entry.get().strip()
+        if not cmd:
+            return
+        
+        if cmd_override is None:
+            self.term_entry.delete(0, "end")
+            if not self._term_history or self._term_history[-1] != cmd:
+                self._term_history.append(cmd)
+            self._term_history_idx = len(self._term_history)
+        
+        if not self.session.connected:
+            self._on_shell_output("sys", "❌ Not connected to remote device.", True)
+            return
+
+        self.term_textbox.configure(state="normal")
+        self.term_textbox.insert("end", f"axecast@remote:~$ {cmd}\n", "prompt")
+        self.term_textbox.see("end")
+        self.term_textbox.configure(state="disabled")
+        
+        self.term_run_btn.configure(state="disabled", text="⏳ ...")
+        self.session.send_shell_command(cmd)
+
+    def _on_term_history_up(self, event):
+        if self._term_history and self._term_history_idx > 0:
+            self._term_history_idx -= 1
+            self.term_entry.delete(0, "end")
+            self.term_entry.insert(0, self._term_history[self._term_history_idx])
+        return "break"
+
+    def _on_term_history_down(self, event):
+        if self._term_history and self._term_history_idx < len(self._term_history) - 1:
+            self._term_history_idx += 1
+            self.term_entry.delete(0, "end")
+            self.term_entry.insert(0, self._term_history[self._term_history_idx])
+        else:
+            self._term_history_idx = len(self._term_history)
+            self.term_entry.delete(0, "end")
+        return "break"
+
+    def _on_shell_output(self, cmd_id: str, text: str, is_err: bool):
+        def _update():
+            if not self._is_alive:
+                return
+            try:
+                self.term_textbox.configure(state="normal")
+                tag = "stderr" if is_err else "stdout"
+                self.term_textbox.insert("end", text + "\n", tag)
+                if self.term_autoscroll_var.get():
+                    self.term_textbox.see("end")
+                self.term_textbox.configure(state="disabled")
+            except Exception:
+                pass
+        self.after(0, _update)
+
+    def _on_shell_done(self, cmd_id: str, exit_code: int):
+        def _update():
+            if not self._is_alive:
+                return
+            try:
+                self.term_textbox.configure(state="normal")
+                code_tag = "done_ok" if exit_code == 0 else "done_err"
+                self.term_textbox.insert("end", f"[Process exited with code {exit_code}]\n\n", code_tag)
+                if self.term_autoscroll_var.get():
+                    self.term_textbox.see("end")
+                self.term_textbox.configure(state="disabled")
+                self.term_run_btn.configure(state="normal", text="▶ Run")
+            except Exception:
+                pass
+        self.after(0, _update)
 
     def _setup_log_interactions(self):
         """Cross-platform copy shortcuts and right-click context menu for log viewer."""
@@ -496,7 +734,9 @@ class RemoteViewer(ctk.CTkToplevel):
             on_status=self._on_status,
             on_device_info=self._on_device_info,
             on_packages=self._on_packages_list,
-            on_active_app=self._on_active_app_detected
+            on_active_app=self._on_active_app_detected,
+            on_shell_output=self._on_shell_output,
+            on_shell_done=self._on_shell_done
         )
         self._update_display_loop()
         self._update_stats_loop()

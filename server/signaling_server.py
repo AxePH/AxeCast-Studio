@@ -117,10 +117,14 @@ class RelayServer:
                     role = "subscriber"
                     room_code = await self._handle_join_room(websocket, msg)
                 
-                elif msg_type in ("touch", "key", "button", "request_offer"):
+                elif msg_type in ("touch", "key", "button", "request_offer", "shell_exec"):
                     if role == "subscriber" and room_code:
                         await self._relay_to_publisher(room_code, raw_msg)
                 
+                elif msg_type in ("shell_output", "shell_done"):
+                    if role == "publisher" and room_code:
+                        await self._relay_to_subscribers(room_code, raw_msg)
+
                 # ── WebRTC Signaling Messages (Offer / Answer / ICE Candidates) ──
                 elif msg_type in ("webrtc_offer", "webrtc_answer", "webrtc_ice"):
                     if role == "publisher" and room_code:

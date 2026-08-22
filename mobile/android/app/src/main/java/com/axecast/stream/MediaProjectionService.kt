@@ -706,7 +706,7 @@ class MediaProjectionService : Service() {
                         put("device_info", JSONObject().apply {
                             put("model", Build.MODEL)
                             put("android", Build.VERSION.RELEASE)
-                            put("version", "v1.0.2")
+                            put("version", "v1.0.3")
                         })
                     }
                     send(createJson.toString())
@@ -808,7 +808,7 @@ class MediaProjectionService : Service() {
 
     private fun createNotification(contentText: String): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("🪓 AxeCast Stream v1.0.2")
+            .setContentTitle("🪓 AxeCast Stream v1.0.3")
             .setContentText(contentText)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)

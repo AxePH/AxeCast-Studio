@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # AxeCast Stream - Fast Local Android APK Builder
-# Builds AxeCast-Stream-v1.0.2.apk
+# Builds AxeCast-Stream-v1.0.3.apk
 # ============================================================
 
 set -e
@@ -33,16 +33,16 @@ if [ -f "mobile/android/gradlew" ]; then
     cd mobile/android
     ./gradlew assembleRelease --quiet
     cd "$DIR"
-    cp mobile/android/app/build/outputs/apk/release/app-release.apk release/AxeCast-Stream-v1.0.2.apk
-    cp release/AxeCast-Stream-v1.0.2.apk axecast_stream.apk
+    cp mobile/android/app/build/outputs/apk/release/app-release.apk release/AxeCast-Stream-v1.0.3.apk
+    cp release/AxeCast-Stream-v1.0.3.apk axecast_stream.apk
 else
     echo "📦 Packaging existing AxeCast APK as release..."
-    cp axecast_stream.apk release/AxeCast-Stream-v1.0.2.apk
+    cp axecast_stream.apk release/AxeCast-Stream-v1.0.3.apk
 fi
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✅ Build Complete! APK generated at:"
-echo "   📂 release/AxeCast-Stream-v1.0.2.apk"
+echo "   📂 release/AxeCast-Stream-v1.0.3.apk"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # Auto install to connected Android device via ADB
@@ -50,7 +50,7 @@ if command -v adb >/dev/null 2>&1; then
     DEVICE_COUNT=$(adb devices | grep -v "List of devices" | grep "device$" | wc -l | tr -d ' ')
     if [ "$DEVICE_COUNT" -gt 0 ]; then
         echo "📲 Android device detected ($DEVICE_COUNT device(s)). Installing APK..."
-        adb install -r release/AxeCast-Stream-v1.0.2.apk
+        adb install -r release/AxeCast-Stream-v1.0.3.apk
         echo "🚀 Launching AxeCast Stream..."
         adb shell am start -n com.axecast.stream/.MainActivity >/dev/null 2>&1 || true
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

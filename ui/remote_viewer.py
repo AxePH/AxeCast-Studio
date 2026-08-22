@@ -582,7 +582,7 @@ class RemoteViewer(ctk.CTkToplevel):
                 return
             try:
                 name = info.get("model", info.get("name", "Unknown"))
-                ver = info.get("version", "v1.0.2")
+                ver = info.get("version", "v1.0.3")
                 battery = info.get("battery", "—")
                 self.device_badge.configure(text=f"📱 {name} ({ver})")
                 if hasattr(self, "battery_badge"):

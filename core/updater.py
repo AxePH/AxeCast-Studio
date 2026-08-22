@@ -4,7 +4,7 @@ import threading
 import requests
 from typing import Dict, Any, Optional, Callable
 
-CURRENT_VERSION = "1.0.2"
+CURRENT_VERSION = "1.0.3"
 GITHUB_REPO = "AxePH/AxeCast-Studio"  # Official repository identifier
 
 def parse_version_tuple(v_str: str) -> tuple:

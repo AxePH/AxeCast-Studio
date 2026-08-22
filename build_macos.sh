@@ -57,7 +57,7 @@ fi
 echo "🔨 Compiling AxeCast-Studio.app bundle..."
 rm -rf release/AxeCast-Studio.app build
 
-$PIP_EXEC run pyinstaller \
+venv/bin/pyinstaller \
   --noconfirm \
   --windowed \
   --name "AxeCast-Studio" \
@@ -67,6 +67,9 @@ $PIP_EXEC run pyinstaller \
   --collect-all customtkinter \
   --collect-all tkinterdnd2 \
   --collect-all websockets \
+  --collect-all aiortc \
+  --collect-all av \
+  --collect-all certifi \
   --distpath release \
   app.py
 

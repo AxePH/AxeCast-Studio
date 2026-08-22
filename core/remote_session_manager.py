@@ -12,6 +12,7 @@ import asyncio
 import logging
 import threading
 import os
+import ssl
 from typing import Callable, Optional, Dict, Any
 
 # Force file logging for debugging
@@ -20,6 +21,21 @@ fh.setLevel(logging.DEBUG)
 logger = logging.getLogger("axecast-remote")
 logger.setLevel(logging.DEBUG)
 logger.addHandler(fh)
+
+def _get_ssl_context(url: str) -> Optional[ssl.SSLContext]:
+    """Get or create an SSL context that handles macOS cert issues gracefully."""
+    if not url or not url.startswith("wss://"):
+        return None
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        return ssl.create_default_context()
+    except Exception:
+        return ssl._create_unverified_context()
+
 
 try:
     import websockets
@@ -269,120 +285,140 @@ class RemoteSessionManager:
                 pass
             self.connected = False
     
+    async def _handle_connected_websocket(self, ws):
+        self.ws = ws
+        
+        # Join the room
+        await ws.send(json.dumps({
+            "type": "join_room",
+            "room_code": self.room_code,
+            "pin": self.pin
+        }))
+        
+        self._last_fps_time = time.time()
+        self._fps_frame_count = 0
+        
+        logger.info(f"Connected to relay: {self.server_url}, joined room: {self.room_code}")
+        
+        async for raw_msg in ws:
+            if self._stop_event.is_set():
+                break
+            
+            if isinstance(raw_msg, bytes):
+                # Direct binary JPEG frame (Zero JSON / Base64 parsing overhead)
+                self._handle_binary_frame(raw_msg)
+                continue
+
+            try:
+                logger.debug(f"Received WS msg: {raw_msg[:100]}")
+                msg = json.loads(raw_msg)
+            except json.JSONDecodeError:
+                continue
+            
+            msg_type = msg.get("type", "")
+            
+            if msg_type == "joined":
+                self.connected = True
+                self.device_info = msg.get("device_info", {})
+                if self._on_status:
+                    self._on_status("connected", f"Connected to room {self.room_code}")
+                if self._on_device_info and self.device_info:
+                    self._on_device_info(self.device_info)
+                # Request WebRTC offer from mobile device
+                try:
+                    await ws.send(json.dumps({
+                        "type": "request_offer",
+                        "room_code": self.room_code
+                    }))
+                except Exception:
+                    pass
+            
+            elif msg_type == "error":
+                if self._on_status:
+                    self._on_status("error", msg.get("message", "Unknown error"))
+                break
+            
+            elif msg_type == "frame":
+                self._handle_frame(msg)
+            
+            elif msg_type == "log":
+                self._handle_log(msg)
+
+            elif msg_type == "logs_batch":
+                for log_item in msg.get("logs", []):
+                    self._handle_log(log_item)
+            
+            elif msg_type == "device_info":
+                self.device_info = msg.get("info", {})
+                if self._on_device_info:
+                    self._on_device_info(self.device_info)
+            
+            elif msg_type == "packages_list":
+                pkgs = msg.get("packages", [])
+                if self._on_packages and pkgs:
+                    self._on_packages(pkgs)
+                    
+            elif msg_type == "active_app":
+                pkg = msg.get("package", "")
+                if self._on_active_app and pkg:
+                    self._on_active_app(pkg)
+            
+            elif msg_type == "webrtc_offer":
+                logger.debug("Received WebRTC offer in websocket loop!")
+                if HAS_AIORTC:
+                    async def safe_handle():
+                        try:
+                            logger.debug("Calling _handle_webrtc_offer...")
+                            await self._handle_webrtc_offer(msg, ws)
+                        except Exception as e:
+                            logger.error(f"❌ Error in _handle_webrtc_offer: {e}", exc_info=True)
+                    asyncio.create_task(safe_handle())
+                else:
+                    logger.error("❌ Received WebRTC offer but aiortc is not installed!")
+
+            elif msg_type == "webrtc_ice":
+                if HAS_AIORTC and self.pc:
+                    asyncio.create_task(self._handle_webrtc_ice(msg))
+
+            elif msg_type == "room_closed":
+                if self._on_status:
+                    self._on_status("closed", msg.get("message", "Room closed."))
+                break
+            
+            elif msg_type == "pong":
+                sent_ts = msg.get("ts", 0)
+                if sent_ts:
+                    self.latency_ms = (time.time() - sent_ts) * 1000
+    
     async def _connect_and_receive(self):
         """Connect to relay server and process incoming messages."""
         if self._on_status:
             self._on_status("connecting", f"Connecting to {self.server_url}...")
         
+        ssl_ctx = _get_ssl_context(self.server_url)
         try:
-            async with websockets.connect(
-                self.server_url,
-                open_timeout=8,
-                max_size=2**22,  # 4MB max frame
-                close_timeout=5
-            ) as ws:
-                self.ws = ws
-                
-                # Join the room
-                await ws.send(json.dumps({
-                    "type": "join_room",
-                    "room_code": self.room_code,
-                    "pin": self.pin
-                }))
-                
-                self._last_fps_time = time.time()
-                self._fps_frame_count = 0
-                
-                async for raw_msg in ws:
-                    if self._stop_event.is_set():
-                        break
-                    
-                    if isinstance(raw_msg, bytes):
-                        # Direct binary JPEG frame (Zero JSON / Base64 parsing overhead)
-                        self._handle_binary_frame(raw_msg)
-                        continue
-
-                    try:
-                        logger.debug(f"Received WS msg: {raw_msg[:100]}")
-                        msg = json.loads(raw_msg)
-                    except json.JSONDecodeError:
-                        continue
-                    
-                    msg_type = msg.get("type", "")
-                    
-                    if msg_type == "joined":
-                        self.connected = True
-                        self.device_info = msg.get("device_info", {})
-                        if self._on_status:
-                            self._on_status("connected", f"Connected to room {self.room_code}")
-                        if self._on_device_info and self.device_info:
-                            self._on_device_info(self.device_info)
-                        # Request WebRTC offer from mobile device
-                        try:
-                            await ws.send(json.dumps({
-                                "type": "request_offer",
-                                "room_code": self.room_code
-                            }))
-                        except Exception:
-                            pass
-                    
-                    elif msg_type == "error":
-                        if self._on_status:
-                            self._on_status("error", msg.get("message", "Unknown error"))
-                        break
-                    
-                    elif msg_type == "frame":
-                        self._handle_frame(msg)
-                    
-                    elif msg_type == "log":
-                        self._handle_log(msg)
-
-                    elif msg_type == "logs_batch":
-                        for log_item in msg.get("logs", []):
-                            self._handle_log(log_item)
-                    
-                    elif msg_type == "device_info":
-                        self.device_info = msg.get("info", {})
-                        if self._on_device_info:
-                            self._on_device_info(self.device_info)
-                    
-                    elif msg_type == "packages_list":
-                        pkgs = msg.get("packages", [])
-                        if self._on_packages and pkgs:
-                            self._on_packages(pkgs)
-                            
-                    elif msg_type == "active_app":
-                        pkg = msg.get("package", "")
-                        if self._on_active_app and pkg:
-                            self._on_active_app(pkg)
-                    
-                    elif msg_type == "webrtc_offer":
-                        logger.debug("Received WebRTC offer in websocket loop!")
-                        if HAS_AIORTC:
-                            async def safe_handle():
-                                try:
-                                    logger.debug("Calling _handle_webrtc_offer...")
-                                    await self._handle_webrtc_offer(msg, ws)
-                                except Exception as e:
-                                    logger.error(f"❌ Error in _handle_webrtc_offer: {e}", exc_info=True)
-                            asyncio.create_task(safe_handle())
-                        else:
-                            logger.error("❌ Received WebRTC offer but aiortc is not installed!")
-
-                    elif msg_type == "webrtc_ice":
-                        if HAS_AIORTC and self.pc:
-                            asyncio.create_task(self._handle_webrtc_ice(msg))
-
-                    elif msg_type == "room_closed":
-                        if self._on_status:
-                            self._on_status("closed", msg.get("message", "Room closed."))
-                        break
-                    
-                    elif msg_type == "pong":
-                        sent_ts = msg.get("ts", 0)
-                        if sent_ts:
-                            self.latency_ms = (time.time() - sent_ts) * 1000
-        
+            try:
+                async with websockets.connect(
+                    self.server_url,
+                    ssl=ssl_ctx,
+                    open_timeout=8,
+                    max_size=2**22,  # 4MB max frame
+                    close_timeout=5
+                ) as ws:
+                    await self._handle_connected_websocket(ws)
+            except Exception as e:
+                if "CERTIFICATE_VERIFY_FAILED" in str(e) and self.server_url.startswith("wss://"):
+                    logger.warning("SSL verification failed, retrying with unverified context...")
+                    async with websockets.connect(
+                        self.server_url,
+                        ssl=ssl._create_unverified_context(),
+                        open_timeout=8,
+                        max_size=2**22,
+                        close_timeout=5
+                    ) as ws:
+                        await self._handle_connected_websocket(ws)
+                else:
+                    raise e
         except websockets.exceptions.ConnectionClosed:
             if self._on_status:
                 self._on_status("disconnected", "Connection closed.")
@@ -399,6 +435,7 @@ class RemoteSessionManager:
                 except Exception:
                     pass
             self.ws = None
+            self.connected = False
             self.connected = False
     
     def _handle_frame(self, msg: dict):
@@ -668,8 +705,10 @@ async def _async_check_room(server_url: str, room_code: str, pin: str = "", time
     digits = "".join(c for c in str(room_code) if c.isdigit())
     code = f"{digits[:3]}-{digits[3:]}" if len(digits) == 6 else str(room_code).strip()
 
-    try:
-        async with websockets.connect(url, open_timeout=timeout, close_timeout=2) as ws:
+    ssl_ctx = _get_ssl_context(url)
+
+    async def _do_check(ctx):
+        async with websockets.connect(url, ssl=ctx, open_timeout=timeout, close_timeout=2) as ws:
             join_msg = {
                 "type": "join_room",
                 "room_code": code,
@@ -688,15 +727,21 @@ async def _async_check_room(server_url: str, room_code: str, pin: str = "", time
                 if err_code == "INVALID_PIN":
                     return False, "INVALID_PIN"
                 return False, resp.get("message", f"Room '{code}' not found or expired.")
-            else:
-                return True, "CONNECTED"
+            return True, "OK"
+
+    try:
+        try:
+            return await _do_check(ssl_ctx)
+        except Exception as e:
+            if "CERTIFICATE_VERIFY_FAILED" in str(e) and url.startswith("wss://"):
+                return await _do_check(ssl._create_unverified_context())
+            raise e
     except asyncio.TimeoutError:
-        return False, "Connection timed out. Server or room not responding."
+        return False, "Connection timed out."
+    except ConnectionRefusedError:
+        return False, f"Could not connect to {url}"
     except Exception as e:
-        err = str(e)
-        if "Connection refused" in err or "Cannot connect" in err or "getaddrinfo" in err:
-            return False, f"Cannot reach relay server at {url}"
-        return False, f"Connection failed: {err}"
+        return False, str(e)
 
 
 def check_room_availability(server_url: str, room_code: str, pin: str = "", timeout: float = 6.0) -> tuple:

@@ -117,11 +117,11 @@ class RelayServer:
                     role = "subscriber"
                     room_code = await self._handle_join_room(websocket, msg)
                 
-                elif msg_type in ("touch", "key", "button", "request_offer", "shell_exec"):
+                elif msg_type in ("touch", "key", "button", "request_offer", "shell_exec", "adb_open", "adb_data", "adb_close"):
                     if role == "subscriber" and room_code:
                         await self._relay_to_publisher(room_code, raw_msg)
                 
-                elif msg_type in ("shell_output", "shell_done"):
+                elif msg_type in ("shell_output", "shell_done", "adb_open_ack", "adb_data", "adb_close"):
                     if role == "publisher" and room_code:
                         await self._relay_to_subscribers(room_code, raw_msg)
 

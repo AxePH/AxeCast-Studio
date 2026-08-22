@@ -13,7 +13,8 @@ import logging
 import threading
 import os
 import ssl
-from typing import Callable, Optional, Dict, Any
+import socket
+from typing import Callable, Optional, Dict, Any, Tuple
 
 # Force file logging for debugging
 fh = logging.FileHandler("/tmp/axecast_remote.log")
@@ -116,6 +117,122 @@ def normalize_relay_url(server_url: str) -> str:
     return url
 
 
+class AdbTcpBridge:
+    """
+    Local TCP server that forwards incoming ADB client connections (e.g. adb connect 127.0.0.1:5555)
+    over WebRTC DataChannel / WebSocket to remote Android device's ADB daemon.
+    """
+    def __init__(self, session: "RemoteSessionManager"):
+        self.session = session
+        self.server_socket: Optional[socket.socket] = None
+        self.port: int = 5555
+        self.running = False
+        self._thread: Optional[threading.Thread] = None
+        self._clients: Dict[str, socket.socket] = {}
+        self._client_lock = threading.Lock()
+
+    def start(self, port: int = 5555) -> Tuple[bool, int, str]:
+        if self.running and self.server_socket:
+            return True, self.port, f"Already running on 127.0.0.1:{self.port}"
+        
+        target_port = port
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1", target_port))
+        except OSError:
+            try:
+                target_port = 5556
+                s.bind(("127.0.0.1", target_port))
+            except OSError:
+                s.bind(("127.0.0.1", 0))
+                target_port = s.getsockname()[1]
+        
+        s.listen(5)
+        self.server_socket = s
+        self.port = target_port
+        self.running = True
+
+        self._thread = threading.Thread(target=self._accept_loop, daemon=True)
+        self._thread.start()
+        logger.info(f"🔌 ADB TCP Bridge listening on 127.0.0.1:{self.port}")
+        return True, self.port, f"Bridge started on 127.0.0.1:{self.port}"
+
+    def stop(self):
+        self.running = False
+        if self.server_socket:
+            try:
+                self.server_socket.close()
+            except Exception:
+                pass
+            self.server_socket = None
+
+        with self._client_lock:
+            for cid, sock in list(self._clients.items()):
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                self.session._send_msg({"type": "adb_close", "cid": cid})
+            self._clients.clear()
+
+    def _accept_loop(self):
+        while self.running and self.server_socket:
+            try:
+                client_sock, addr = self.server_socket.accept()
+                cid = f"cid_{int(time.time() * 1000)}_{len(self._clients)}"
+                with self._client_lock:
+                    self._clients[cid] = client_sock
+                
+                # Notify remote to open socket
+                self.session._send_msg({"type": "adb_open", "cid": cid})
+                threading.Thread(target=self._client_reader, args=(cid, client_sock), daemon=True).start()
+            except Exception:
+                break
+
+    def _client_reader(self, cid: str, sock: socket.socket):
+        while self.running:
+            try:
+                data = sock.recv(32768)
+                if not data:
+                    break
+                b64 = base64.b64encode(data).decode("ascii")
+                self.session._send_msg({
+                    "type": "adb_data",
+                    "cid": cid,
+                    "data": b64
+                })
+            except Exception:
+                break
+        
+        with self._client_lock:
+            self._clients.pop(cid, None)
+        try:
+            sock.close()
+        except Exception:
+            pass
+        self.session._send_msg({"type": "adb_close", "cid": cid})
+
+    def handle_remote_data(self, cid: str, b64_data: str):
+        try:
+            raw = base64.b64decode(b64_data)
+            with self._client_lock:
+                sock = self._clients.get(cid)
+            if sock:
+                sock.sendall(raw)
+        except Exception as e:
+            logger.debug(f"Error handling remote ADB data: {e}")
+
+    def handle_remote_close(self, cid: str):
+        with self._client_lock:
+            sock = self._clients.pop(cid, None)
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+
 class RemoteSessionManager:
     """
     Manages a remote session connection to the AxeCast Relay Server.
@@ -140,6 +257,7 @@ class RemoteSessionManager:
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._stop_event = threading.Event()
+        self.adb_bridge = AdbTcpBridge(self)
         
         # Callbacks
         self._on_frame: Optional[Callable[[Image.Image], None]] = None
@@ -157,6 +275,7 @@ class RemoteSessionManager:
 
         # WebRTC & Real-time Speedometer
         self.pc = None
+        self.is_p2p: bool = False
         self.speed_mbps = 0.0
         self.speed_kbps = 0.0
         self._last_fps_time = 0.0
@@ -233,6 +352,22 @@ class RemoteSessionManager:
         if self._on_status:
             self._on_status("disconnected", "Remote session ended.")
     
+        self.adb_bridge = AdbTcpBridge(self)
+        
+    def start_adb_bridge(self, port: int = 5555) -> Tuple[bool, int, str]:
+        """Start local TCP bridge for adb connect localhost:<port>."""
+        return self.adb_bridge.start(port)
+        
+    def stop_adb_bridge(self):
+        """Stop local TCP bridge."""
+        self.adb_bridge.stop()
+
+    def is_adb_bridge_running(self) -> bool:
+        return self.adb_bridge.running and self.adb_bridge.server_socket is not None
+        
+    def get_adb_bridge_port(self) -> int:
+        return self.adb_bridge.port
+
     def send_touch(self, x: int, y: int, action: str = "tap",
                    source_width: int = 0, source_height: int = 0):
         """Send touch event to the remote device."""
@@ -404,6 +539,17 @@ class RemoteSessionManager:
                 exit_code = msg.get("exit_code", 0)
                 if self._on_shell_done:
                     self._on_shell_done(cmd_id, exit_code)
+                    
+            elif msg_type == "adb_data":
+                cid = msg.get("cid", "")
+                data_b64 = msg.get("data", "")
+                if cid and data_b64:
+                    self.adb_bridge.handle_remote_data(cid, data_b64)
+                    
+            elif msg_type == "adb_close":
+                cid = msg.get("cid", "")
+                if cid:
+                    self.adb_bridge.handle_remote_close(cid)
             
             elif msg_type == "webrtc_offer":
                 logger.debug("Received WebRTC offer in websocket loop!")
@@ -553,6 +699,8 @@ class RemoteSessionManager:
                 RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
                 RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
                 RTCIceServer(urls=["stun:stun2.l.google.com:19302"]),
+                RTCIceServer(urls=["turn:openrelay.metered.ca:80", "turn:openrelay.metered.ca:443"], username="openrelay", credential="openrelay"),
+                RTCIceServer(urls=["turn:openrelay.metered.ca:443?transport=tcp"], username="openrelay", credential="openrelay")
             ])
             self.pc = RTCPeerConnection(configuration=config)
 
@@ -597,6 +745,15 @@ class RemoteSessionManager:
                             exit_code = data.get("exit_code", 0)
                             if self._on_shell_done:
                                 self._on_shell_done(cmd_id, exit_code)
+                        elif m_type == "adb_data":
+                            cid = data.get("cid", "")
+                            data_b64 = data.get("data", "")
+                            if cid and data_b64:
+                                self.adb_bridge.handle_remote_data(cid, data_b64)
+                        elif m_type == "adb_close":
+                            cid = data.get("cid", "")
+                            if cid:
+                                self.adb_bridge.handle_remote_close(cid)
                     except Exception:
                         pass
 

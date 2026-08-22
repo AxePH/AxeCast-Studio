@@ -11,7 +11,7 @@ import {
   Share,
 } from 'react-native';
 
-const APP_VERSION = 'v1.0.3';
+const APP_VERSION = 'v1.0.4';
 
 export default function App() {
   const [activeMode, setActiveMode] = useState<'WIFI' | 'REMOTE'>('WIFI');

@@ -139,6 +139,21 @@ class RemoteViewer(ctk.CTkToplevel):
         self.fps_badge.pack(side="left", padx=4)
         
         ctk.CTkLabel(badges_frame, text="|", font=ctk.CTkFont(size=10), text_color="#475569").pack(side="left")
+
+        # 1-Click ADB Connect button for Android Studio
+        self.adb_btn = ctk.CTkButton(
+            badges_frame,
+            text="🔌 Connect ADB",
+            width=110,
+            height=26,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("#334155", "#1e293b"),
+            hover_color=("#0284c7", "#0369a1"),
+            command=self._toggle_adb_bridge
+        )
+        self.adb_btn.pack(side="left", padx=(4, 4))
+        
+        ctk.CTkLabel(badges_frame, text="|", font=ctk.CTkFont(size=10), text_color="#475569").pack(side="left")
         
         self.latency_badge = ctk.CTkLabel(
             badges_frame,
@@ -471,6 +486,7 @@ class RemoteViewer(ctk.CTkToplevel):
         tools_frame.pack(fill="x", padx=8, pady=(2, 4))
 
         quick_cmds = [
+            ("🔌 ADB Bridge", "__ADB_BRIDGE__"),
             ("🔋 Battery", "dumpsys battery"),
             ("📱 Specs", "getprop ro.product.model; getprop ro.build.version.release"),
             ("📦 Apps", "pm list packages -3"),
@@ -490,6 +506,17 @@ class RemoteViewer(ctk.CTkToplevel):
                     fg_color=("#dc2626", "#991b1b"),
                     hover_color=("#b91c1c", "#7f1d1d"),
                     command=self._clear_terminal
+                )
+            elif cmd == "__ADB_BRIDGE__":
+                btn = ctk.CTkButton(
+                    tools_frame,
+                    text=label,
+                    width=86,
+                    height=24,
+                    font=ctk.CTkFont(size=10, weight="bold"),
+                    fg_color=("#0284c7", "#0369a1"),
+                    hover_color=("#0369a1", "#0284c7"),
+                    command=self._toggle_adb_bridge
                 )
             else:
                 btn = ctk.CTkButton(
@@ -516,7 +543,7 @@ class RemoteViewer(ctk.CTkToplevel):
         self.term_textbox.pack(fill="both", expand=True, padx=8, pady=(0, 4))
         
         # Tags for styling terminal output
-        self.term_textbox.tag_config("prompt", foreground="#38bdf8", font=ctk.CTkFont(family="Menlo, Consolas, monospace", size=11, weight="bold"))
+        self.term_textbox.tag_config("prompt", foreground="#38bdf8")
         self.term_textbox.tag_config("stdout", foreground="#f8fafc")
         self.term_textbox.tag_config("stderr", foreground="#f87171")
         self.term_textbox.tag_config("done_ok", foreground="#4ade80")
@@ -662,6 +689,75 @@ class RemoteViewer(ctk.CTkToplevel):
             except Exception:
                 pass
         self.after(0, _update)
+
+    def _toggle_adb_bridge(self):
+        """Toggle local TCP bridge for 1-click ADB connection in Android Studio."""
+        if self.session.is_adb_bridge_running():
+            self.session.stop_adb_bridge()
+            self.adb_btn.configure(
+                text="🔌 Connect ADB",
+                fg_color=("#334155", "#1e293b"),
+                hover_color=("#0284c7", "#0369a1")
+            )
+            self._on_shell_output("adb", "🔌 [Remote ADB Bridge Disconnected]", False)
+            return
+
+        self.adb_btn.configure(text="⏳ Linking...", state="disabled")
+        ok, port, msg = self.session.start_adb_bridge(5555)
+        if not ok:
+            self.adb_btn.configure(text="❌ Failed", state="normal")
+            self._on_shell_output("adb", f"❌ Failed to start ADB bridge: {msg}", True)
+            return
+
+        def _connect_worker():
+            adb_bin = "adb"
+            if hasattr(self.master, "adb") and self.master.adb and hasattr(self.master.adb, "adb_path"):
+                adb_bin = self.master.adb.adb_path
+            
+            try:
+                res = subprocess.run([adb_bin, "connect", f"127.0.0.1:{port}"], capture_output=True, text=True, timeout=2.5)
+                out = (res.stdout.strip() or res.stderr.strip())
+            except Exception as e:
+                out = f"Connection timeout: {e}"
+
+            is_connected = ("connected to" in out.lower() or "already connected" in out.lower()) and "cannot connect" not in out.lower() and "failed" not in out.lower()
+
+            def _update_ui():
+                if not self._is_alive or not self.winfo_exists():
+                    return
+                if is_connected:
+                    self.adb_btn.configure(
+                        state="normal",
+                        text=f"🟢 ADB: {port}",
+                        fg_color=("#16a34a", "#15803d"),
+                        hover_color=("#15803d", "#166534")
+                    )
+                    self._on_shell_output(
+                        "adb",
+                        f"╔════════════════════════════════════════════════════════════╗\n"
+                        f"║  🟢 Remote ADB Bridge is LIVE on 127.0.0.1:{port}             ║\n"
+                        f"║  👉 Android Studio / VS Code can now Deploy & Debug!        ║\n"
+                        f"║  Status: {out:<47}║\n"
+                        f"╚════════════════════════════════════════════════════════════╝",
+                        False
+                    )
+                else:
+                    self.adb_btn.configure(
+                        state="normal",
+                        text=f"🟡 ADB: {port}",
+                        fg_color=("#d97706", "#b45309"),
+                        hover_color=("#b45309", "#92400e")
+                    )
+                    self._on_shell_output(
+                        "adb",
+                        f"⚠️ ADB Tunnel active on 127.0.0.1:{port}, but adbd is not responding.\n"
+                        f"👉 Response: {out}\n"
+                        f"💡 Note: Ensure 'Wireless Debugging' is enabled in Developer Options on your phone.",
+                        True
+                    )
+            self.after(0, _update_ui)
+
+        threading.Thread(target=_connect_worker, daemon=True).start()
 
     def _setup_log_interactions(self):
         """Cross-platform copy shortcuts and right-click context menu for log viewer."""
@@ -822,7 +918,7 @@ class RemoteViewer(ctk.CTkToplevel):
                 return
             try:
                 name = info.get("model", info.get("name", "Unknown"))
-                ver = info.get("version", "v1.0.3")
+                ver = info.get("version", "v1.0.4")
                 battery = info.get("battery", "—")
                 self.device_badge.configure(text=f"📱 {name} ({ver})")
                 if hasattr(self, "battery_badge"):
@@ -842,30 +938,40 @@ class RemoteViewer(ctk.CTkToplevel):
         if not self._is_alive:
             return
         
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+
+        win_w = self.canvas_frame.winfo_width()
+        win_h = self.canvas_frame.winfo_height()
+        last_dim = getattr(self, "_last_rendered_dim", (0, 0))
+        dim_changed = (win_w, win_h) != last_dim and win_w > 50 and win_h > 50
+
         frame = None
         with self._frame_lock:
             cur_seq = getattr(self, "_frame_seq", 0)
             last_seq = getattr(self, "_last_rendered_seq", -1)
-            if cur_seq != last_seq and self._current_frame is not None:
+            if (cur_seq != last_seq or dim_changed) and self._current_frame is not None:
                 frame = self._current_frame
                 self._last_rendered_seq = cur_seq
         
-        if frame is not None:
-            win_w = self.canvas_frame.winfo_width()
-            win_h = self.canvas_frame.winfo_height()
-            
-            if win_w > 50 and win_h > 50:
+        if frame is not None and win_w > 50 and win_h > 50:
+            try:
                 fw, fh = frame.size
                 scale = min(win_w / fw, win_h / fh)
                 new_w = max(1, int(fw * scale))
                 new_h = max(1, int(fh * scale))
                 
-                # Use NEAREST instead of BILINEAR for significantly faster rendering 
-                # (prevents UI thread from blocking and causing "not smooth" perception)
-                resized = frame.resize((new_w, new_h), Image.Resampling.NEAREST)
+                # Fast & crisp scaling
+                resized = frame.resize((new_w, new_h), Image.Resampling.BILINEAR if min(new_w, new_h) > 300 else Image.Resampling.NEAREST)
                 ctk_img = ctk.CTkImage(light_image=resized, dark_image=resized, size=(new_w, new_h))
                 self.video_label.configure(image=ctk_img, text="")
                 self.video_label._image = ctk_img
+                self._last_rendered_dim = (win_w, win_h)
+            except Exception:
+                pass
         
         self.after(16, self._update_display_loop)  # ~60 FPS UI refresh
     

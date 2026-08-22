@@ -81,6 +81,7 @@ class MediaProjectionService : Service() {
     private var eglBase: EglBase? = null
     private var dataChannel: DataChannel? = null
     private var isWebRtcInitialized = false
+    private var isP2pConnected = false
     private var localDataIntent: Intent? = null
     private var localResultCode: Int = 0
 
@@ -182,11 +183,12 @@ class MediaProjectionService : Service() {
             isStreaming = true
             setupWindowMetrics()
 
+            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
+            setupVirtualDisplay()
+
             if (mode == "WIFI") {
-                val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                mediaProjection = projectionManager.getMediaProjection(resultCode, dataIntent)
                 startHttpMjpegServer()
-                setupVirtualDisplay()
             } else {
                 connectWebSocket(currentRoomCode, serverUrl)
             }
@@ -328,89 +330,96 @@ class MediaProjectionService : Service() {
     }
 
     private fun startLogcatStreaming() {
+        logcatThread?.interrupt()
         logcatThread = Thread {
-            try {
-                refreshRunningProcessMap()
-                Runtime.getRuntime().exec("logcat -c").waitFor()
-                val process = Runtime.getRuntime().exec("logcat -v threadtime *:D")
-                logcatProcess = process
-                val reader = BufferedReader(InputStreamReader(process.inputStream))
-                val threadtimeRegex = Regex("""^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+([VDIWEF])\s+([^:(]+):\s*(.*)$""")
-                val appSwitchRegex = Regex("""(?:cmp=|Displayed\s+|ActivityRecord\{[^\s]+\s+u\d+\s+|Window\{[^\s]+\s+u\d+\s+|Focus moved to Window\{[^\s]+\s+|ResumedActivity: ActivityRecord\{[^\s]+\s+u\d+\s+)([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)""")
-                val procStartRegex = Regex("""(?:Start proc\s+(\d+):([a-zA-Z0-9_.]+)|pid=(\d+)\s+package=([a-zA-Z0-9_.]+))""")
+            val threadtimeRegex = Regex("""^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+([VDIWEF])\s+([^:(]+):\s*(.*)$""")
+            val appSwitchRegex = Regex("""(?:cmp=|Displayed\s+|ActivityRecord\{[^\s]+\s+u\d+\s+|Window\{[^\s]+\s+u\d+\s+|Focus moved to Window\{[^\s]+\s+|ResumedActivity: ActivityRecord\{[^\s]+\s+u\d+\s+)([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)""")
+            val procStartRegex = Regex("""(?:Start proc\s+(\d+):([a-zA-Z0-9_.]+)|pid=(\d+)\s+package=([a-zA-Z0-9_.]+))""")
 
-                while (isStreaming) {
-                    val line = reader.readLine() ?: break
-                    if (webSocketClient?.isOpen == true || dataChannel?.state() == DataChannel.State.OPEN) {
-                        if (line.contains("proc") || line.contains("pid=")) {
-                            val pMatch = procStartRegex.find(line)
-                            if (pMatch != null) {
-                                val pidFound = (pMatch.groupValues[1].ifEmpty { pMatch.groupValues[3] }).toIntOrNull() ?: 0
-                                val pkgFound = pMatch.groupValues[2].ifEmpty { pMatch.groupValues[4] }
-                                if (pidFound > 0 && pkgFound.isNotEmpty()) {
-                                    pidToPkgCache[pidFound] = pkgFound
-                                }
-                            }
-                        }
+            while (isStreaming && !Thread.currentThread().isInterrupted) {
+                try {
+                    refreshRunningProcessMap()
+                    try { Runtime.getRuntime().exec("logcat -c").waitFor() } catch (ignored: Exception) {}
+                    val process = Runtime.getRuntime().exec(arrayOf("logcat", "-v", "threadtime"))
+                    logcatProcess = process
+                    val reader = BufferedReader(InputStreamReader(process.inputStream))
 
-                        if (line.contains("Activity") || line.contains("Window") || line.contains("Displayed") || line.contains("cmp=")) {
-                            val swMatch = appSwitchRegex.find(line)
-                            if (swMatch != null) {
-                                val swPkg = swMatch.groupValues[1]
-                                if (!swPkg.startsWith("com.android.systemui") && !swPkg.startsWith("com.axecast.stream") && swPkg != currentActivePkg) {
-                                    currentActivePkg = swPkg
-                                    val actMsg = JSONObject().apply {
-                                        put("type", "active_app")
-                                        put("package", swPkg)
-                                    }
-                                    if (dataChannel?.state() == DataChannel.State.OPEN) {
-                                        val buffer = DataChannel.Buffer(ByteBuffer.wrap(actMsg.toString().toByteArray()), false)
-                                        dataChannel?.send(buffer)
-                                    } else {
-                                        webSocketClient?.send(actMsg.toString())
+                    while (isStreaming && !Thread.currentThread().isInterrupted) {
+                        val line = reader.readLine() ?: break
+                        if (webSocketClient?.isOpen == true || dataChannel?.state() == DataChannel.State.OPEN) {
+                            if (line.contains("proc") || line.contains("pid=")) {
+                                val pMatch = procStartRegex.find(line)
+                                if (pMatch != null) {
+                                    val pidFound = (pMatch.groupValues[1].ifEmpty { pMatch.groupValues[3] }).toIntOrNull() ?: 0
+                                    val pkgFound = pMatch.groupValues[2].ifEmpty { pMatch.groupValues[4] }
+                                    if (pidFound > 0 && pkgFound.isNotEmpty()) {
+                                        pidToPkgCache[pidFound] = pkgFound
                                     }
                                 }
                             }
-                        }
 
-                        val match = threadtimeRegex.find(line)
-                        val logJson = JSONObject().apply {
-                            put("type", "log")
-                            put("raw", line)
-                            if (match != null) {
-                                val (time, pidStr, tidStr, level, tag, msg) = match.destructured
-                                val pid = pidStr.trim().toIntOrNull() ?: 0
-                                var pkg = getPackageForPid(pid)
-                                if (pkg.isEmpty()) {
-                                    pkg = if (tag.contains(".")) tag.trim() else currentActivePkg
+                            if (line.contains("Activity") || line.contains("Window") || line.contains("Displayed") || line.contains("cmp=")) {
+                                val swMatch = appSwitchRegex.find(line)
+                                if (swMatch != null) {
+                                    val swPkg = swMatch.groupValues[1]
+                                    if (!swPkg.startsWith("com.android.systemui") && !swPkg.startsWith("com.axecast.stream") && swPkg != currentActivePkg) {
+                                        currentActivePkg = swPkg
+                                        val actMsg = JSONObject().apply {
+                                            put("type", "active_app")
+                                            put("package", swPkg)
+                                        }
+                                        if (dataChannel?.state() == DataChannel.State.OPEN) {
+                                            val buffer = DataChannel.Buffer(ByteBuffer.wrap(actMsg.toString().toByteArray(Charsets.UTF_8)), false)
+                                            dataChannel?.send(buffer)
+                                        } else {
+                                            webSocketClient?.send(actMsg.toString())
+                                        }
+                                    }
                                 }
-                                put("timestamp", time)
-                                put("pid", pid)
-                                put("level", level)
-                                put("tag", tag.trim())
-                                put("message", msg)
-                                put("package", pkg)
-                            } else {
-                                put("timestamp", "")
-                                put("level", "I")
-                                put("tag", "")
-                                put("message", line)
-                                put("package", currentActivePkg)
                             }
-                        }
 
-                        if (dataChannel?.state() == DataChannel.State.OPEN) {
-                            val buffer = DataChannel.Buffer(ByteBuffer.wrap(logJson.toString().toByteArray()), false)
-                            dataChannel?.send(buffer)
-                        } else if (webSocketClient?.isOpen == true && webSocketClient?.hasBufferedData() == false) {
-                            webSocketClient?.send(logJson.toString())
+                            val match = threadtimeRegex.find(line)
+                            val logJson = JSONObject().apply {
+                                put("type", "log")
+                                put("raw", line)
+                                if (match != null) {
+                                    val (time, pidStr, tidStr, level, tag, msg) = match.destructured
+                                    val pid = pidStr.trim().toIntOrNull() ?: 0
+                                    var pkg = getPackageForPid(pid)
+                                    if (pkg.isEmpty()) {
+                                        pkg = if (tag.contains(".")) tag.trim() else currentActivePkg
+                                    }
+                                    put("timestamp", time)
+                                    put("pid", pid)
+                                    put("level", level)
+                                    put("tag", tag.trim())
+                                    put("message", msg)
+                                    put("package", pkg)
+                                } else {
+                                    put("timestamp", "")
+                                    put("level", "I")
+                                    put("tag", "")
+                                    put("message", line)
+                                    put("package", currentActivePkg)
+                                }
+                            }
+
+                            val rawJson = logJson.toString()
+                            if (dataChannel?.state() == DataChannel.State.OPEN) {
+                                val buffer = DataChannel.Buffer(ByteBuffer.wrap(rawJson.toByteArray(Charsets.UTF_8)), false)
+                                dataChannel?.send(buffer)
+                            } else if (webSocketClient?.isOpen == true) {
+                                webSocketClient?.send(rawJson)
+                            }
                         }
                     }
+                    try { Thread.sleep(1000) } catch (ignored: Exception) {}
+                } catch (e: Exception) {
+                    try { Thread.sleep(1500) } catch (ignored: Exception) {}
                 }
-            } catch (e: Exception) {
             }
         }.apply {
-            priority = Thread.MIN_PRIORITY
+            priority = Thread.NORM_PRIORITY
             start()
         }
     }
@@ -468,8 +477,9 @@ class MediaProjectionService : Service() {
             videoSource = peerConnectionFactory?.createVideoSource(capturer.isScreencast)
             capturer.initialize(surfaceTextureHelper, this, videoSource!!.capturerObserver)
             
-            val targetHeight = targetResolutionWidth * screenHeight / screenWidth
-            capturer.startCapture(targetResolutionWidth, targetHeight, 30)
+            val targetHeight = ((targetResolutionWidth * screenHeight / screenWidth) / 2) * 2
+            val targetWidth = (targetResolutionWidth / 2) * 2
+            capturer.startCapture(targetWidth, targetHeight, 30)
             
             videoTrack = peerConnectionFactory?.createVideoTrack("video_track", videoSource)
         }
@@ -485,7 +495,19 @@ class MediaProjectionService : Service() {
             val iceServers = listOf(
                 PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer(),
                 PeerConnection.IceServer.builder("stun:stun1.l.google.com:19302").createIceServer(),
-                PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer()
+                PeerConnection.IceServer.builder("stun:stun2.l.google.com:19302").createIceServer(),
+                PeerConnection.IceServer.builder("turn:openrelay.metered.ca:80")
+                    .setUsername("openrelay")
+                    .setPassword("openrelay")
+                    .createIceServer(),
+                PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443")
+                    .setUsername("openrelay")
+                    .setPassword("openrelay")
+                    .createIceServer(),
+                PeerConnection.IceServer.builder("turn:openrelay.metered.ca:443?transport=tcp")
+                    .setUsername("openrelay")
+                    .setPassword("openrelay")
+                    .createIceServer()
             )
             val rtcConfig = PeerConnection.RTCConfiguration(iceServers)
             rtcConfig.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
@@ -497,9 +519,11 @@ class MediaProjectionService : Service() {
                 override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
                     Log.i("AxeCast", "⚡ WebRTC ICE State: $state")
                     if (state == PeerConnection.IceConnectionState.CONNECTED) {
+                        isP2pConnected = true
                         sendStatus("CONNECTED", "⚡ WebRTC P2P Connected (Room $currentRoomCode)", currentRoomCode, "")
                     } else if (state == PeerConnection.IceConnectionState.DISCONNECTED || state == PeerConnection.IceConnectionState.FAILED) {
-                        sendStatus("DISCONNECTED", "⚫ WebRTC P2P Disconnected")
+                        isP2pConnected = false
+                        sendStatus("CONNECTED", "🔵 Cloud Relay Stream (Room $currentRoomCode)", currentRoomCode, "")
                     }
                 }
                 override fun onIceConnectionReceivingChange(receiving: Boolean) {}
@@ -742,6 +766,15 @@ class MediaProjectionService : Service() {
                             httpClients.remove(client)
                         }
                     }
+                } else if (!isP2pConnected && webSocketClient?.isOpen == true) {
+                    val b64 = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
+                    val frameMsg = JSONObject().apply {
+                        put("type", "frame")
+                        put("room_code", currentRoomCode)
+                        put("data", b64)
+                        put("ts", now)
+                    }
+                    webSocketClient?.send(frameMsg.toString())
                 }
             } catch (e: Exception) {
             } finally {
@@ -818,6 +851,85 @@ class MediaProjectionService : Service() {
         }
     }
 
+    private val adbSockets = java.util.concurrent.ConcurrentHashMap<String, Socket>()
+
+    private fun findAdbPort(): Int {
+        val portProp = try {
+            val p = Runtime.getRuntime().exec(arrayOf("getprop", "service.adb.tcp.port"))
+            BufferedReader(InputStreamReader(p.inputStream)).readLine()?.trim()?.toIntOrNull()
+        } catch (e: Exception) { null }
+        if (portProp != null && portProp > 0) return portProp
+        return 5555
+    }
+
+    private fun handleAdbOpen(cid: String) {
+        Thread {
+            try {
+                val adbPort = findAdbPort()
+                Log.i("AxeCast", "🔌 Opening ADB tunnel socket for CID $cid -> 127.0.0.1:$adbPort")
+                val socket = Socket()
+                socket.connect(java.net.InetSocketAddress("127.0.0.1", adbPort), 1500)
+                adbSockets[cid] = socket
+                val inStream = socket.getInputStream()
+                val buffer = ByteArray(32768)
+
+                val openAck = JSONObject().apply {
+                    put("type", "adb_open_ack")
+                    put("cid", cid)
+                    put("success", true)
+                }
+                sendControlMessage(openAck.toString())
+
+                while (isStreaming && !socket.isClosed) {
+                    val read = inStream.read(buffer)
+                    if (read == -1) break
+                    val b64 = Base64.encodeToString(buffer, 0, read, Base64.NO_WRAP)
+                    val dataMsg = JSONObject().apply {
+                        put("type", "adb_data")
+                        put("cid", cid)
+                        put("data", b64)
+                    }
+                    sendControlMessage(dataMsg.toString())
+                }
+            } catch (e: Exception) {
+                Log.e("AxeCast", "ADB tunnel socket error for CID $cid: ${e.message}")
+                val openErr = JSONObject().apply {
+                    put("type", "adb_open_ack")
+                    put("cid", cid)
+                    put("success", false)
+                    put("error", e.message ?: "Failed to connect to local adbd")
+                }
+                sendControlMessage(openErr.toString())
+            } finally {
+                try { adbSockets.remove(cid)?.close() } catch (ignored: Exception) {}
+                val closeMsg = JSONObject().apply {
+                    put("type", "adb_close")
+                    put("cid", cid)
+                }
+                sendControlMessage(closeMsg.toString())
+            }
+        }.start()
+    }
+
+    private fun handleAdbData(cid: String, b64Data: String) {
+        try {
+            val bytes = Base64.decode(b64Data, Base64.NO_WRAP)
+            val socket = adbSockets[cid]
+            if (socket != null && !socket.isClosed) {
+                socket.getOutputStream().write(bytes)
+                socket.getOutputStream().flush()
+            }
+        } catch (e: Exception) {
+            Log.e("AxeCast", "Error writing ADB data: ${e.message}")
+        }
+    }
+
+    private fun handleAdbClose(cid: String) {
+        try {
+            adbSockets.remove(cid)?.close()
+        } catch (ignored: Exception) {}
+    }
+
     private fun handleIncomingControlMessage(message: String) {
         try {
             val json = JSONObject(message)
@@ -827,6 +939,22 @@ class MediaProjectionService : Service() {
                 val cmd = json.optString("command", "")
                 if (cmd.isNotEmpty()) {
                     handleShellCommand(cmdId, cmd)
+                }
+            } else if (msgType == "adb_open") {
+                val cid = json.optString("cid")
+                if (cid.isNotEmpty()) {
+                    handleAdbOpen(cid)
+                }
+            } else if (msgType == "adb_data") {
+                val cid = json.optString("cid")
+                val data = json.optString("data")
+                if (cid.isNotEmpty() && data.isNotEmpty()) {
+                    handleAdbData(cid, data)
+                }
+            } else if (msgType == "adb_close") {
+                val cid = json.optString("cid")
+                if (cid.isNotEmpty()) {
+                    handleAdbClose(cid)
                 }
             } else if (msgType == "button") {
                 val action = json.optString("action")
@@ -889,7 +1017,7 @@ class MediaProjectionService : Service() {
                         put("device_info", JSONObject().apply {
                             put("model", Build.MODEL)
                             put("android", Build.VERSION.RELEASE)
-                            put("version", "v1.0.3")
+                            put("version", "v1.0.4")
                         })
                     }
                     send(createJson.toString())
@@ -976,7 +1104,7 @@ class MediaProjectionService : Service() {
 
     private fun createNotification(contentText: String): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("🪓 AxeCast Stream v1.0.3")
+            .setContentTitle("🪓 AxeCast Stream v1.0.4")
             .setContentText(contentText)
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)

@@ -739,21 +739,40 @@ class MainWindow(BaseWindow):
             subprocess.run(["xdg-open", path])
 
     def _open_wireless_dialog(self):
-        WirelessDialog(self, self.adb, on_connected=self.refresh_devices_async)
+        if hasattr(self, "_wireless_dialog") and self._wireless_dialog and self._wireless_dialog.winfo_exists():
+            self._wireless_dialog.lift()
+            self._wireless_dialog.focus_force()
+            return
+        from ui.wireless_dialog import WirelessDialog
+        self._wireless_dialog = WirelessDialog(self, self.adb, on_connected=self.refresh_devices_async)
 
     def _open_remote_room(self):
+        if hasattr(self, "_remote_room_dialog") and self._remote_room_dialog and self._remote_room_dialog.winfo_exists():
+            self._remote_room_dialog.lift()
+            self._remote_room_dialog.focus_force()
+            return
         from ui.remote_room_dialog import RemoteRoomDialog
-        def on_join(server_url, room_code):
+        def on_join(server_url, room_code, pin=""):
             from ui.remote_viewer import RemoteViewer
             save_dir = self.settings.get("save_dir", "captures")
-            RemoteViewer(self, server_url=server_url, room_code=room_code, save_dir=save_dir)
-        RemoteRoomDialog(self, on_join=on_join)
+            RemoteViewer(self, server_url=server_url, room_code=room_code, pin=pin, save_dir=save_dir)
+        self._remote_room_dialog = RemoteRoomDialog(self, on_join=on_join)
 
     def _open_settings_dialog(self):
-        SettingsDialog(self, self.settings, on_save=self._on_settings_saved)
+        if hasattr(self, "_settings_dialog") and self._settings_dialog and self._settings_dialog.winfo_exists():
+            self._settings_dialog.lift()
+            self._settings_dialog.focus_force()
+            return
+        from ui.settings_dialog import SettingsDialog
+        self._settings_dialog = SettingsDialog(self, self.settings, on_save=self._on_settings_saved)
 
     def _open_nodev_dialog(self):
-        NoDevDialog(self, save_dir=self.settings.get("save_dir", "captures"))
+        if hasattr(self, "_nodev_dialog") and self._nodev_dialog and self._nodev_dialog.winfo_exists():
+            self._nodev_dialog.lift()
+            self._nodev_dialog.focus_force()
+            return
+        from ui.no_dev_dialog import NoDevDialog
+        self._nodev_dialog = NoDevDialog(self, save_dir=self.settings.get("save_dir", "captures"))
 
     def _on_settings_saved(self, new_settings):
         self.settings.update(new_settings)
@@ -789,15 +808,19 @@ class MainWindow(BaseWindow):
 
     def _open_sqlite_studio(self):
         """Opens standalone SQLite Studio dialog."""
+        if hasattr(self, "_sqlite_dialog") and self._sqlite_dialog and self._sqlite_dialog.winfo_exists():
+            self._sqlite_dialog.lift()
+            self._sqlite_dialog.focus_force()
+            return
         from ui.sqlite_studio_dialog import SQLiteStudioDialog
-        dlg = SQLiteStudioDialog(self)
-        dlg.focus_set()
+        self._sqlite_dialog = SQLiteStudioDialog(self)
+        self._sqlite_dialog.focus_set()
 
     def _open_studio_logs(self):
         """Opens Main Program / Studio System Logs & Diagnostics dialog."""
         if hasattr(self, "studio_log_dialog") and self.studio_log_dialog and self.studio_log_dialog.winfo_exists():
             self.studio_log_dialog.lift()
-            self.studio_log_dialog.focus()
+            self.studio_log_dialog.focus_force()
             return
             
         from ui.studio_log_dialog import StudioLogDialog

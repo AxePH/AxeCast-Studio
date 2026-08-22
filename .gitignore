@@ -88,3 +88,7 @@ Desktop.ini
 *.sublime-workspace
 *.sublime-project
 
+
+# Environment Variables
+.env
+

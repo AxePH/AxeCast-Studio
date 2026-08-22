@@ -7,8 +7,11 @@ Dual-pane window showing:
 """
 
 import os
+import re
 import time
+import subprocess
 import threading
+import tkinter as tk
 import customtkinter as ctk
 from PIL import Image
 from typing import Optional
@@ -19,14 +22,15 @@ from core.remote_session_manager import RemoteSessionManager, LogEntry
 class RemoteViewer(ctk.CTkToplevel):
     """Dual-pane Remote Studio Viewer for screen mirroring and live log streaming."""
     
-    def __init__(self, master, server_url: str, room_code: str, save_dir: str = "captures"):
+    def __init__(self, master, server_url: str, room_code: str, pin: str = "", save_dir: str = "captures"):
         super().__init__(master)
         self.title(f"🌐 AxeCast Remote — Room {room_code}")
-        self.geometry("1100x720")
-        self.minsize(800, 500)
+        self.geometry("1180x750")
+        self.minsize(850, 520)
         
         self.server_url = server_url
         self.room_code = room_code
+        self.pin = str(pin).strip()
         self.save_dir = save_dir
         self._is_alive = True
         self._current_frame: Optional[Image.Image] = None
@@ -43,6 +47,14 @@ class RemoteViewer(ctk.CTkToplevel):
         self._connect_session()
         
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+        try:
+            self.attributes("-topmost", True)
+            self.after(200, lambda: self.attributes("-topmost", False) if self.winfo_exists() else None)
+        except Exception:
+            pass
     
     def _build_ui(self):
         # ── Top Telemetry Bar ──
@@ -52,11 +64,14 @@ class RemoteViewer(ctk.CTkToplevel):
         self.main_pane = ctk.CTkFrame(self, fg_color="transparent")
         self.main_pane.pack(fill="both", expand=True, padx=8, pady=(4, 8))
         
-        # Left pane: Screen viewer (~60%)
-        self._build_screen_pane()
-        
-        # Right pane: Log viewer (~40%)
+        # Right pane: Log viewer (initial width 480)
         self._build_log_pane()
+        
+        # Center draggable splitter
+        self._build_splitter()
+        
+        # Left pane: Screen viewer (expands to fill remaining space)
+        self._build_screen_pane()
     
     def _build_top_bar(self):
         bar = ctk.CTkFrame(self, height=44, fg_color=("#0f172a", "#090d16"), corner_radius=0)
@@ -82,9 +97,9 @@ class RemoteViewer(ctk.CTkToplevel):
             text_color="#38bdf8"
         )
         self.device_badge.pack(side="left", padx=(8, 4))
-        
+
         ctk.CTkLabel(badges_frame, text="|", font=ctk.CTkFont(size=10), text_color="#475569").pack(side="left")
-        
+
         self.battery_badge = ctk.CTkLabel(
             badges_frame,
             text="🔋 —%",
@@ -92,7 +107,27 @@ class RemoteViewer(ctk.CTkToplevel):
             text_color="#10b981"
         )
         self.battery_badge.pack(side="left", padx=4)
+
+        ctk.CTkLabel(badges_frame, text="|", font=ctk.CTkFont(size=10), text_color="#475569").pack(side="left")
         
+        self.mode_badge = ctk.CTkLabel(
+            badges_frame,
+            text="🟢 P2P Direct",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#22c55e"
+        )
+        self.mode_badge.pack(side="left", padx=4)
+
+        ctk.CTkLabel(badges_frame, text="|", font=ctk.CTkFont(size=10), text_color="#475569").pack(side="left")
+
+        self.speed_badge = ctk.CTkLabel(
+            badges_frame,
+            text="🚀 0.00 Mbps",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#38bdf8"
+        )
+        self.speed_badge.pack(side="left", padx=4)
+
         ctk.CTkLabel(badges_frame, text="|", font=ctk.CTkFont(size=10), text_color="#475569").pack(side="left")
         
         self.fps_badge = ctk.CTkLabel(
@@ -126,12 +161,7 @@ class RemoteViewer(ctk.CTkToplevel):
                                          font=ctk.CTkFont(size=14), text_color="#475569", fg_color="black")
         self.video_label.pack(fill="both", expand=True)
         
-        # Bind mouse events for touch relay
-        self.video_label.bind("<Button-1>", self._on_mouse_click)
-        self.video_label.bind("<B1-Motion>", self._on_mouse_drag)
-        self.video_label.bind("<ButtonRelease-1>", self._on_mouse_release)
-        
-        # Bottom toolbar: Navigation buttons + Screenshot/Record
+        # Bottom toolbar: Navigation buttons + Screenshot/Record + Note
         nav_bar = ctk.CTkFrame(self.screen_frame, height=40, fg_color="transparent")
         nav_bar.pack(fill="x", padx=6, pady=(0, 6))
         
@@ -156,9 +186,16 @@ class RemoteViewer(ctk.CTkToplevel):
                 font=ctk.CTkFont(size=14),
                 fg_color=("#334155", "#1e293b"),
                 hover_color=("#475569", "#334155"),
-                command=lambda a=action: self.session.send_button(a)
+                command=lambda a=action: self._on_nav_button(a)
             )
             btn.pack(side="left", padx=2)
+            
+        ctk.CTkLabel(
+            nav_left,
+            text="💡 Screen: Non-Touch",
+            font=ctk.CTkFont(size=11),
+            text_color="#64748b"
+        ).pack(side="left", padx=8)
         
         # Action buttons (right)
         action_right = ctk.CTkFrame(nav_bar, fg_color="transparent")
@@ -175,10 +212,61 @@ class RemoteViewer(ctk.CTkToplevel):
         )
         self.snap_btn.pack(side="left", padx=2)
     
+    def _on_nav_button(self, action: str):
+        """Send navigation action over WebSocket, with ADB keyevent backup if available."""
+        self.session.send_button(action)
+        
+        if hasattr(self.master, "adb") and self.master.adb:
+            key_map = {
+                "back": "KEYCODE_BACK",
+                "home": "KEYCODE_HOME",
+                "recents": "KEYCODE_APP_SWITCH",
+                "power": "KEYCODE_POWER"
+            }
+            code = key_map.get(action)
+            if code:
+                for dev in getattr(self.master, "devices", []):
+                    serial = dev.get("serial")
+                    if serial and not dev.get("is_apk"):
+                        self.master.adb.send_keyevent(serial, code)
+                        break
+
+    # ── Draggable Resizable Splitter ──
+    def _build_splitter(self):
+        self.splitter = ctk.CTkFrame(
+            self.main_pane,
+            width=8,
+            fg_color=("#334155", "#1e293b"),
+            corner_radius=4,
+            cursor="sb_h_double_arrow"
+        )
+        self.splitter.pack(side="right", fill="y", padx=4)
+        
+        # Visual center grip bar
+        grip = ctk.CTkFrame(self.splitter, width=2, height=36, fg_color=("#64748b", "#475569"), corner_radius=1)
+        grip.place(relx=0.5, rely=0.5, anchor="center")
+        
+        self.splitter.bind("<B1-Motion>", self._on_splitter_drag)
+        grip.bind("<B1-Motion>", self._on_splitter_drag)
+
+    def _on_splitter_drag(self, event):
+        try:
+            pane_w = self.main_pane.winfo_width()
+            pane_rootx = self.main_pane.winfo_rootx()
+            mouse_x = event.x_root
+            
+            # Calculate right pane width (distance from right border to mouse)
+            new_log_w = (pane_rootx + pane_w) - mouse_x
+            new_log_w = max(240, min(new_log_w, pane_w - 280))
+            
+            self.log_frame.configure(width=new_log_w)
+        except Exception:
+            pass
+
     # ── Right Pane: Log Viewer ──
     def _build_log_pane(self):
-        self.log_frame = ctk.CTkFrame(self.main_pane, width=380, fg_color=("#1e293b", "#0f172a"), corner_radius=10)
-        self.log_frame.pack(side="right", fill="both", padx=(4, 0))
+        self.log_frame = ctk.CTkFrame(self.main_pane, width=480, fg_color=("#1e293b", "#0f172a"), corner_radius=10)
+        self.log_frame.pack(side="right", fill="both", padx=(0, 0))
         self.log_frame.pack_propagate(False)
         
         # Log header
@@ -200,7 +288,7 @@ class RemoteViewer(ctk.CTkToplevel):
         )
         self.log_count_label.pack(side="right")
         
-        # Search bar
+        # Search bar & Clear
         search_frame = ctk.CTkFrame(self.log_frame, fg_color="transparent")
         search_frame.pack(fill="x", padx=8, pady=(0, 4))
         
@@ -215,14 +303,49 @@ class RemoteViewer(ctk.CTkToplevel):
         
         clear_btn = ctk.CTkButton(
             search_frame,
-            text="🗑",
-            width=32,
+            text="🗑 Clear",
+            width=60,
             height=30,
-            font=ctk.CTkFont(size=12),
-            fg_color=("#475569", "#334155"),
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("#dc2626", "#b91c1c"),
+            hover_color=("#b91c1c", "#991b1b"),
             command=self._clear_logs
         )
         clear_btn.pack(side="right")
+        
+        # Package / App selector row
+        pkg_frame = ctk.CTkFrame(self.log_frame, fg_color="transparent")
+        pkg_frame.pack(fill="x", padx=8, pady=(0, 4))
+        
+        ctk.CTkLabel(pkg_frame, text="📦 App:", font=ctk.CTkFont(size=11, weight="bold"), text_color="#94a3b8").pack(side="left", padx=(0, 4))
+        
+        self._selected_package = "All Apps"
+        self._active_package = ""
+        self._discovered_packages = set()
+        
+        self.pkg_option = ctk.CTkOptionMenu(
+            pkg_frame,
+            values=["All Apps"],
+            height=26,
+            font=ctk.CTkFont(size=11),
+            dropdown_font=ctk.CTkFont(size=11),
+            fg_color=("#334155", "#1e293b"),
+            button_color=("#475569", "#334155"),
+            command=self._on_package_selected
+        )
+        self.pkg_option.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        
+        self.active_app_btn = ctk.CTkButton(
+            pkg_frame,
+            text="⚡ Active App",
+            width=78,
+            height=26,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            fg_color=("#0284c7", "#0369a1"),
+            hover_color=("#0369a1", "#0284c7"),
+            command=self._filter_active_app
+        )
+        self.active_app_btn.pack(side="right")
         
         # Log level filter badges
         filter_frame = ctk.CTkFrame(self.log_frame, fg_color="transparent")
@@ -298,57 +421,194 @@ class RemoteViewer(ctk.CTkToplevel):
             command=self._export_logs
         )
         export_btn.pack(side="right")
+        
+        # Setup copy shortcuts & right click menu
+        self._setup_log_interactions()
+
+    def _setup_log_interactions(self):
+        """Cross-platform copy shortcuts and right-click context menu for log viewer."""
+        raw_text = self.log_textbox._textbox
+        
+        def copy_selection(event=None):
+            try:
+                selected = raw_text.get("sel.first", "sel.last")
+                if selected:
+                    self.clipboard_clear()
+                    self.clipboard_append(selected)
+                    return "break"
+            except Exception:
+                pass
+            return "break"
+
+        def select_all(event=None):
+            try:
+                raw_text.tag_add("sel", "1.0", "end")
+                return "break"
+            except Exception:
+                pass
+            return "break"
+
+        # Explicitly bind all copy and select all shortcut keys
+        for key in ("<Command-c>", "<Command-C>", "<Control-c>", "<Control-C>", "<<Copy>>"):
+            raw_text.bind(key, copy_selection)
+            self.log_textbox.bind(key, copy_selection)
+        for key in ("<Command-a>", "<Command-A>", "<Control-a>", "<Control-A>"):
+            raw_text.bind(key, select_all)
+            self.log_textbox.bind(key, select_all)
+            
+        # Modern Right-Click Popup Context Menu
+        self.log_context_menu = tk.Menu(
+            self,
+            tearoff=0,
+            bg="#1e293b",
+            fg="#f8fafc",
+            activebackground="#0284c7",
+            activeforeground="#ffffff",
+            bd=1,
+            relief="solid",
+            font=("Helvetica", 11)
+        )
+        self.log_context_menu.add_command(label="📋 Copy Selected (Cmd+C / Ctrl+C)", command=lambda: copy_selection())
+        self.log_context_menu.add_command(label="📑 Select All (Cmd+A / Ctrl+A)", command=lambda: select_all())
+        self.log_context_menu.add_separator()
+        self.log_context_menu.add_command(label="💾 Export All Logs...", command=self._export_logs)
+        self.log_context_menu.add_command(label="🗑 Clear All Logs", command=self._clear_logs)
+
+        def show_context_menu(event):
+            try:
+                self.log_context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                self.log_context_menu.grab_release()
+
+        # Bind right click (Button-2 on Mac, Button-3 on Win/Linux, Control-Click on Mac)
+        for b in ("<Button-2>", "<Button-3>", "<Control-Button-1>"):
+            raw_text.bind(b, show_context_menu)
+            self.log_textbox.bind(b, show_context_menu)
     
     # ── Session Connection ──
     def _connect_session(self):
         self.session.connect(
             server_url=self.server_url,
             room_code=self.room_code,
+            pin=self.pin,
             on_frame=self._on_frame,
             on_log=self._on_log,
             on_status=self._on_status,
-            on_device_info=self._on_device_info
+            on_device_info=self._on_device_info,
+            on_packages=self._on_packages_list,
+            on_active_app=self._on_active_app_detected
         )
         self._update_display_loop()
         self._update_stats_loop()
     
-    def _on_frame(self, img: Image.Image):
-        with self._frame_lock:
-            self._current_frame = img
-    
+    def _schedule_pkg_update(self):
+        now = time.time()
+        if hasattr(self, "_last_pkg_ui_update") and now - self._last_pkg_ui_update < 2.0:
+            return
+        self._last_pkg_ui_update = now
+        
+        def _do_update():
+            if not self._is_alive:
+                return
+            try:
+                if not self.winfo_exists():
+                    return
+                vals = ["All Apps"] + sorted(list(self._discovered_packages))
+                self.pkg_option.configure(values=vals)
+            except Exception:
+                pass
+        self.after(500, _do_update)
+
+    def _on_packages_list(self, pkgs: list):
+        for p in pkgs:
+            if p:
+                self._discovered_packages.add(p)
+        self._schedule_pkg_update()
+
+    def _on_active_app_detected(self, pkg: str):
+        def _update():
+            if not self._is_alive:
+                return
+            try:
+                if not self.winfo_exists():
+                    return
+                if pkg:
+                    self._active_package = pkg
+                    self._discovered_packages.add(pkg)
+                    short_name = pkg.split(".")[-1]
+                    self.active_app_btn.configure(text=f"⚡ {short_name}")
+                    if self._selected_package == "Active App":
+                        self._rerender_logs()
+                self._schedule_pkg_update()
+            except Exception:
+                pass
+        self.after(0, _update)
+
     def _on_log(self, entry: LogEntry):
         self._log_entries.append(entry)
-        self.after(0, lambda: self._append_log_ui(entry))
+        
+        # Track discovered packages & active app
+        if entry.package and entry.package not in self._discovered_packages:
+            self._discovered_packages.add(entry.package)
+            if not entry.package.startswith("com.android.systemui") and not entry.package.startswith("com.axecast.stream"):
+                self._active_package = entry.package
+            self._schedule_pkg_update()
+        
+        if entry.package and not entry.package.startswith("com.android.systemui") and not entry.package.startswith("com.axecast.stream"):
+            self._active_package = entry.package
+
+        self.after(0, lambda e=entry: self._append_log_ui(e))
     
     def _on_status(self, status: str, message: str):
         def _update():
-            if status == "connected":
-                self.conn_badge.configure(text=f"🟢 {message}", text_color="#22c55e")
-            elif status == "connecting":
-                self.conn_badge.configure(text=f"⏳ {message}", text_color="#f59e0b")
-            elif status == "error":
-                self.conn_badge.configure(text=f"❌ {message}", text_color="#ef4444")
-            elif status == "closed" or status == "disconnected":
-                self.conn_badge.configure(text=f"⚫ {message}", text_color="#94a3b8")
+            if not self._is_alive:
+                return
+            try:
+                if status == "connected":
+                    self.conn_badge.configure(text=f"🟢 {message}", text_color="#22c55e")
+                elif status == "connecting":
+                    self.conn_badge.configure(text=f"⏳ {message}", text_color="#f59e0b")
+                elif status == "error":
+                    self.conn_badge.configure(text=f"❌ {message}", text_color="#ef4444")
+                elif status == "closed" or status == "disconnected":
+                    self.conn_badge.configure(text=f"⚫ {message}", text_color="#94a3b8")
+            except Exception:
+                pass
         self.after(0, _update)
     
     def _on_device_info(self, info: dict):
         def _update():
-            name = info.get("model", info.get("name", "Unknown"))
-            ver = info.get("version", "v1.0.2")
-            battery = info.get("battery", "—")
-            self.device_badge.configure(text=f"📱 {name} ({ver})")
-            self.battery_badge.configure(text=f"🔋 {battery}%")
-            self.title(f"🌐 AxeCast Remote — {name} {ver} ({self.room_code})")
+            if not self._is_alive:
+                return
+            try:
+                name = info.get("model", info.get("name", "Unknown"))
+                ver = info.get("version", "v1.0.2")
+                battery = info.get("battery", "—")
+                self.device_badge.configure(text=f"📱 {name} ({ver})")
+                if hasattr(self, "battery_badge"):
+                    self.battery_badge.configure(text=f"🔋 {battery}%")
+                self.title(f"🌐 AxeCast Remote — {name} {ver} ({self.room_code})")
+            except Exception:
+                pass
         self.after(0, _update)
+    
+    def _on_frame(self, img: Image.Image):
+        with self._frame_lock:
+            self._current_frame = img
+            self._frame_seq = getattr(self, "_frame_seq", 0) + 1
     
     # ── Display Loop ──
     def _update_display_loop(self):
         if not self._is_alive:
             return
         
+        frame = None
         with self._frame_lock:
-            frame = self._current_frame
+            cur_seq = getattr(self, "_frame_seq", 0)
+            last_seq = getattr(self, "_last_rendered_seq", -1)
+            if cur_seq != last_seq and self._current_frame is not None:
+                frame = self._current_frame
+                self._last_rendered_seq = cur_seq
         
         if frame is not None:
             win_w = self.canvas_frame.winfo_width()
@@ -360,12 +620,14 @@ class RemoteViewer(ctk.CTkToplevel):
                 new_w = max(1, int(fw * scale))
                 new_h = max(1, int(fh * scale))
                 
-                resized = frame.resize((new_w, new_h), Image.Resampling.BILINEAR)
+                # Use NEAREST instead of BILINEAR for significantly faster rendering 
+                # (prevents UI thread from blocking and causing "not smooth" perception)
+                resized = frame.resize((new_w, new_h), Image.Resampling.NEAREST)
                 ctk_img = ctk.CTkImage(light_image=resized, dark_image=resized, size=(new_w, new_h))
                 self.video_label.configure(image=ctk_img, text="")
                 self.video_label._image = ctk_img
         
-        self.after(33, self._update_display_loop)  # ~30 FPS UI refresh
+        self.after(16, self._update_display_loop)  # ~60 FPS UI refresh
     
     def _update_stats_loop(self):
         if not self._is_alive:
@@ -373,7 +635,20 @@ class RemoteViewer(ctk.CTkToplevel):
         
         fps = self.session.fps
         latency = self.session.latency_ms
+        speed_mbps = self.session.speed_mbps
+        speed_kbps = self.session.speed_kbps
+        is_p2p = self.session.is_p2p
         
+        if is_p2p:
+            self.mode_badge.configure(text="🟢 P2P Direct (WebRTC)", text_color="#22c55e")
+        else:
+            self.mode_badge.configure(text="🔵 Relay Mode", text_color="#38bdf8")
+            
+        if speed_mbps >= 1.0:
+            self.speed_badge.configure(text=f"🚀 {speed_mbps:.2f} Mbps")
+        else:
+            self.speed_badge.configure(text=f"🚀 {speed_kbps:.0f} KB/s")
+
         self.fps_badge.configure(text=f"⚡ {fps:.0f} FPS")
         self.latency_badge.configure(text=f"📡 {latency:.0f} ms")
         self.log_count_label.configure(text=f"{len(self._log_entries)} lines")
@@ -409,27 +684,100 @@ class RemoteViewer(ctk.CTkToplevel):
         )
     
     # ── Log UI ──
+    def _on_package_selected(self, choice: str):
+        self._selected_package = choice
+        self._rerender_logs()
+
+    def _filter_active_app(self):
+        """Snap filter to the app currently running in foreground."""
+        if hasattr(self.master, "adb") and self.master.adb:
+            for dev in getattr(self.master, "devices", []):
+                serial = dev.get("serial")
+                if serial and not dev.get("is_apk"):
+                    try:
+                        res = subprocess.run([self.master.adb.adb_path, "-s", serial, "shell", "dumpsys", "window"], capture_output=True, text=True, timeout=2)
+                        for line in res.stdout.splitlines():
+                            if "mCurrentFocus" in line or "mFocusedApp" in line:
+                                m = re.search(r"([a-zA-Z0-9_]+(?:\.[a-zA-Z0-9_]+)+)", line)
+                                if m:
+                                    found_pkg = m.group(1)
+                                    if not found_pkg.startswith("com.android.systemui") and not found_pkg.startswith("com.axecast.stream"):
+                                        self._active_package = found_pkg
+                                        self._discovered_packages.add(found_pkg)
+                                        break
+                    except Exception:
+                        pass
+                    break
+
+        if self._active_package:
+            self._selected_package = self._active_package
+            self.pkg_option.set(self._active_package)
+            short_name = self._active_package.split(".")[-1]
+            self.active_app_btn.configure(text=f"⚡ {short_name}")
+        else:
+            self._selected_package = "All Apps"
+            self.pkg_option.set("All Apps")
+        self._rerender_logs()
+
     def _append_log_ui(self, entry: LogEntry):
-        # Apply filter
+        if not self._is_alive:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+
+        # Level filter
         if self._log_filter_level != "ALL" and entry.level != self._log_filter_level:
             return
         
+        # Package filter
+        if self._selected_package != "All Apps":
+            target = self._selected_package.lower()
+            # Ignore OS window compositor spam
+            if entry.tag in ("SurfaceFlinger", "Layer", "RenderThread", "libprocessgroup"):
+                return
+
+            pkg_match = bool(entry.package and (target in entry.package.lower() or entry.package.lower() in target))
+            tag_match = bool(entry.tag and (target in entry.tag.lower() or entry.tag.lower() in target))
+            
+            # Meaningful token matching (e.g., "oishidrink", "oishiclub", "lite")
+            meaningful_tokens = [t for t in target.split(".") if len(t) >= 3 and t not in ("com", "org", "net", "app", "android", "google", "sec")]
+            token_match = any(
+                token in (entry.package or "").lower() or 
+                token in (entry.tag or "").lower() or 
+                token in (entry.message or "").lower()
+                for token in meaningful_tokens
+            )
+            
+            # Framework tag matching (e.g. flutter, reactnative logs when package matches or is active)
+            fw_tags = ("flutter", "dart", "reactnative", "reactnativejs", "unity", "chromium", "okhttp", "retrofit", "dio")
+            fw_match = bool(entry.tag and entry.tag.lower() in fw_tags and (pkg_match or token_match or entry.package == self._selected_package))
+
+            if not (pkg_match or tag_match or token_match or fw_match):
+                return
+        
+        # Search text filter
         if self._log_search and self._log_search.lower() not in entry.display_text.lower():
             return
         
-        self.log_textbox.configure(state="normal")
-        tag = entry.level if entry.level in ("V", "D", "I", "W", "E", "F") else "I"
-        self.log_textbox.insert("end", entry.display_text + "\n", tag)
-        
-        # Limit to last 2000 lines to keep memory low
-        line_count = int(self.log_textbox.index("end-1c").split(".")[0])
-        if line_count > 2000:
-            self.log_textbox.delete("1.0", "500.0")
-        
-        if self.autoscroll_var.get():
-            self.log_textbox.see("end")
-        
-        self.log_textbox.configure(state="disabled")
+        try:
+            self.log_textbox.configure(state="normal")
+            tag = entry.level if entry.level in ("V", "D", "I", "W", "E", "F") else "I"
+            self.log_textbox.insert("end", entry.display_text + "\n", tag)
+            
+            # Limit to last 2000 lines to keep memory low
+            line_count = int(self.log_textbox.index("end-1c").split(".")[0])
+            if line_count > 2000:
+                self.log_textbox.delete("1.0", "500.0")
+            
+            if self.autoscroll_var.get():
+                self.log_textbox.see("end")
+            
+            self.log_textbox.configure(state="disabled")
+        except Exception:
+            pass
     
     def _set_log_filter(self, level: str, color: str):
         self._log_filter_level = level
@@ -449,23 +797,55 @@ class RemoteViewer(ctk.CTkToplevel):
         self._rerender_logs()
     
     def _rerender_logs(self):
-        self.log_textbox.configure(state="normal")
-        self.log_textbox.delete("1.0", "end")
-        
-        for entry in self._log_entries[-2000:]:
-            if self._log_filter_level != "ALL" and entry.level != self._log_filter_level:
-                continue
-            if self._log_search and self._log_search.lower() not in entry.display_text.lower():
-                continue
-            tag = entry.level if entry.level in ("V", "D", "I", "W", "E", "F") else "I"
-            self.log_textbox.insert("end", entry.display_text + "\n", tag)
-        
-        if self.autoscroll_var.get():
-            self.log_textbox.see("end")
-        
-        self.log_textbox.configure(state="disabled")
+        if not self._is_alive:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+        except Exception:
+            return
+
+        try:
+            self.log_textbox.configure(state="normal")
+            self.log_textbox.delete("1.0", "end")
+            
+            for entry in self._log_entries[-2000:]:
+                # Level filter
+                if self._log_filter_level != "ALL" and entry.level != self._log_filter_level:
+                    continue
+                # Package filter
+                if self._selected_package != "All Apps":
+                    target = self._selected_package.lower()
+                    if entry.tag in ("SurfaceFlinger", "Layer", "RenderThread", "libprocessgroup"):
+                        continue
+                    pkg_match = bool(entry.package and (target in entry.package.lower() or entry.package.lower() in target))
+                    tag_match = bool(entry.tag and (target in entry.tag.lower() or entry.tag.lower() in target))
+                    meaningful_tokens = [t for t in target.split(".") if len(t) >= 3 and t not in ("com", "org", "net", "app", "android", "google", "sec")]
+                    token_match = any(
+                        token in (entry.package or "").lower() or 
+                        token in (entry.tag or "").lower() or 
+                        token in (entry.message or "").lower()
+                        for token in meaningful_tokens
+                    )
+                    fw_tags = ("flutter", "dart", "reactnative", "reactnativejs", "unity", "chromium", "okhttp", "retrofit", "dio")
+                    fw_match = bool(entry.tag and entry.tag.lower() in fw_tags and (pkg_match or token_match or entry.package == self._selected_package))
+                    if not (pkg_match or tag_match or token_match or fw_match):
+                        continue
+                # Search filter
+                if self._log_search and self._log_search.lower() not in entry.display_text.lower():
+                    continue
+                tag = entry.level if entry.level in ("V", "D", "I", "W", "E", "F") else "I"
+                self.log_textbox.insert("end", entry.display_text + "\n", tag)
+            
+            if self.autoscroll_var.get():
+                self.log_textbox.see("end")
+            
+            self.log_textbox.configure(state="disabled")
+        except Exception:
+            pass
     
     def _clear_logs(self):
+        """Clears all logs in memory and from the UI display."""
         self._log_entries.clear()
         self.log_textbox.configure(state="normal")
         self.log_textbox.delete("1.0", "end")

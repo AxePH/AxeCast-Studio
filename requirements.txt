@@ -6,3 +6,6 @@ psutil>=5.9.0
 websockets>=12.0
 windnd>=1.0.7; platform_system == "Windows"
 tkinterdnd2>=0.4.2
+aiortc>=1.15.0
+av>=17.1.0
+python-dotenv>=1.0.0

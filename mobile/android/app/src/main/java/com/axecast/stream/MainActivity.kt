@@ -1,31 +1,41 @@
 package com.axecast.stream
 
+import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
-import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Bundle
-import android.text.format.Formatter
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.widget.SwitchCompat
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import kotlin.random.Random
 
 class MainActivity : AppCompatActivity() {
 
     private val REQUEST_MEDIA_PROJECTION = 1001
+    private val REQUEST_PERMISSIONS = 2001
     private lateinit var projectionManager: MediaProjectionManager
     private lateinit var prefs: SharedPreferences
     private var isStreaming = false
-    private var activeMode = "WIFI" // "WIFI" or "REMOTE"
+    private var activeMode = "WIFI"
     private var roomCode = ""
     private var pin = ""
 
@@ -36,10 +46,60 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvWifiUrl: TextView
     private lateinit var tvWifiStatus: TextView
     private lateinit var tvRoomCode: TextView
+    private lateinit var switchPinLock: SwitchCompat
     private lateinit var tvPin: TextView
     private lateinit var tvRemoteStatus: TextView
     private lateinit var btnToggle: Button
     private lateinit var etServerUrl: EditText
+
+    private lateinit var btnRes360: Button
+    private lateinit var btnRes480: Button
+    private lateinit var btnRes720: Button
+    private lateinit var btnRes1080: Button
+    private lateinit var tvActiveResHint: TextView
+    private var selectedResolution = 480
+
+    private lateinit var tvPermNotif: TextView
+    private lateinit var tvPermLogs: TextView
+    private lateinit var tvPermPkgs: TextView
+
+    private val statusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val status = intent?.getStringExtra("STATUS") ?: ""
+            val text = intent?.getStringExtra("TEXT") ?: ""
+            val assignedCode = intent?.getStringExtra("ROOM_CODE") ?: ""
+            val assignedPin = intent?.getStringExtra("PIN") ?: ""
+
+            runOnUiThread {
+                if (assignedCode.isNotEmpty()) {
+                    roomCode = assignedCode
+                    tvRoomCode.text = roomCode
+                }
+                if (assignedPin.isNotEmpty()) {
+                    pin = assignedPin
+                    if (switchPinLock.isChecked) {
+                        tvPin.text = "PIN: $pin"
+                        tvPin.setTextColor(0xFF38BDF8.toInt())
+                    }
+                } else if (assignedCode.isNotEmpty() && !switchPinLock.isChecked) {
+                    tvPin.text = "PIN: OFF (Open)"
+                    tvPin.setTextColor(0xFF94A3B8.toInt())
+                }
+
+                if (activeMode == "WIFI") {
+                    tvWifiStatus.text = text
+                } else {
+                    tvRemoteStatus.text = text
+                    if (status == "ERROR") {
+                        tvRemoteStatus.setTextColor(0xFFEF4444.toInt())
+                        tvRoomCode.text = "--- ---"
+                    } else if (status == "CONNECTED") {
+                        tvRemoteStatus.setTextColor(0xFF22C55E.toInt())
+                    }
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,16 +115,50 @@ class MainActivity : AppCompatActivity() {
         tvWifiUrl = findViewById(R.id.tvWifiUrl)
         tvWifiStatus = findViewById(R.id.tvWifiStatus)
         tvRoomCode = findViewById(R.id.tvRoomCode)
+        switchPinLock = findViewById(R.id.switchPinLock)
         tvPin = findViewById(R.id.tvPin)
         tvRemoteStatus = findViewById(R.id.tvRemoteStatus)
         btnToggle = findViewById(R.id.btnToggle)
         etServerUrl = findViewById(R.id.etServerUrl)
 
-        val savedUrl = prefs.getString("SERVER_URL", "ws://192.168.1.108:9820")
-        etServerUrl.setText(savedUrl)
+        setupResolutionSelector()
+
+        tvPermNotif = findViewById(R.id.tvPermNotif)
+        tvPermLogs = findViewById(R.id.tvPermLogs)
+        tvPermPkgs = findViewById(R.id.tvPermPkgs)
+
+        val isPinLock = prefs.getBoolean("PIN_LOCK_ENABLED", true)
+        switchPinLock.isChecked = isPinLock
+        updatePinUi(isPinLock)
+
+        switchPinLock.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean("PIN_LOCK_ENABLED", isChecked).apply()
+            updatePinUi(isChecked)
+        }
+
+        val lastBuildUrl = prefs.getString("LAST_BUILD_URL", "") ?: ""
+        val savedUrl = prefs.getString("SERVER_URL", "") ?: ""
+        if (BuildConfig.SERVER_URL.isNotEmpty() && BuildConfig.SERVER_URL != lastBuildUrl) {
+            etServerUrl.setText(BuildConfig.SERVER_URL)
+            prefs.edit()
+                .putString("SERVER_URL", BuildConfig.SERVER_URL)
+                .putString("LAST_BUILD_URL", BuildConfig.SERVER_URL)
+                .apply()
+        } else if (savedUrl.isNotEmpty()) {
+            etServerUrl.setText(savedUrl)
+        } else if (BuildConfig.SERVER_URL.isNotEmpty()) {
+            etServerUrl.setText(BuildConfig.SERVER_URL)
+        }
 
         val ip = getLocalIpAddress()
         tvWifiUrl.text = "http://$ip:8080/stream"
+
+        val filter = IntentFilter("com.axecast.stream.STATUS_UPDATE")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(statusReceiver, filter)
+        }
 
         btnTabWifi.setOnClickListener {
             if (!isStreaming) switchMode("WIFI")
@@ -76,19 +170,120 @@ class MainActivity : AppCompatActivity() {
 
         btnToggle.setOnClickListener {
             if (!isStreaming) {
-                if (activeMode == "REMOTE") {
-                    val url = etServerUrl.text.toString().trim()
-                    if (url.isEmpty()) {
-                        Toast.makeText(this, "Please enter Relay Server URL", Toast.LENGTH_SHORT).show()
-                        return@setOnClickListener
-                    }
-                    prefs.edit().putString("SERVER_URL", url).apply()
-                }
-                startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
+                attemptStartStream()
             } else {
                 stopStreamService()
             }
         }
+
+        // Check & request all standard permissions at once on launch
+        requestInitialPermissions()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updatePermissionIndicators()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try { unregisterReceiver(statusReceiver) } catch (ignored: Exception) {}
+    }
+
+    private fun requestInitialPermissions() {
+        val permissionsNeeded = ArrayList<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                permissionsNeeded.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+        if (permissionsNeeded.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, permissionsNeeded.toTypedArray(), REQUEST_PERMISSIONS)
+        }
+        updatePermissionIndicators()
+    }
+
+    private fun updatePermissionIndicators() {
+        // 1. Notifications
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val hasNotif = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            if (hasNotif) {
+                tvPermNotif.text = "🟢 Granted"
+                tvPermNotif.setTextColor(0xFF22C55E.toInt())
+            } else {
+                tvPermNotif.text = "🔴 Not Granted"
+                tvPermNotif.setTextColor(0xFFEF4444.toInt())
+            }
+        } else {
+            tvPermNotif.text = "🟢 Ready"
+            tvPermNotif.setTextColor(0xFF22C55E.toInt())
+        }
+
+        // 2. System Logs (READ_LOGS)
+        val hasLogs = checkCallingOrSelfPermission(Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED
+        if (hasLogs) {
+            tvPermLogs.text = "🟢 Granted"
+            tvPermLogs.setTextColor(0xFF22C55E.toInt())
+        } else {
+            tvPermLogs.text = "🟡 Needs ADB"
+            tvPermLogs.setTextColor(0xFFF59E0B.toInt())
+        }
+
+        // 3. Package Visibility
+        tvPermPkgs.text = "🟢 Ready"
+        tvPermPkgs.setTextColor(0xFF22C55E.toInt())
+    }
+
+    private fun attemptStartStream() {
+        // Enforce Notification permission
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val hasNotif = ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            if (!hasNotif) {
+                Toast.makeText(this, "Notification permission is required for streaming service", Toast.LENGTH_SHORT).show()
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_PERMISSIONS)
+                return
+            }
+        }
+
+        if (activeMode == "REMOTE") {
+            val url = etServerUrl.text.toString().trim()
+            if (url.isEmpty()) {
+                Toast.makeText(this, "Please enter Relay Server URL", Toast.LENGTH_SHORT).show()
+                return
+            }
+            prefs.edit().putString("SERVER_URL", url).apply()
+        }
+
+        // Check READ_LOGS permission
+        val hasLogs = checkCallingOrSelfPermission(Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED
+        if (!hasLogs) {
+            showReadLogsDialog()
+            return
+        }
+
+        proceedToCaptureIntent()
+    }
+
+    private fun showReadLogsDialog() {
+        val adbCmd = "adb shell pm grant com.axecast.stream android.permission.READ_LOGS"
+        AlertDialog.Builder(this)
+            .setTitle("🛡️ System Logcat Permission")
+            .setMessage("To stream system-wide app logs across the entire phone, Android requires one-time READ_LOGS permission.\n\nCommand:\n$adbCmd")
+            .setPositiveButton("📋 Copy & Continue") { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("ADB Command", adbCmd))
+                Toast.makeText(this, "Copied ADB command to clipboard", Toast.LENGTH_SHORT).show()
+                proceedToCaptureIntent()
+            }
+            .setNeutralButton("Start Screen Only") { _, _ ->
+                proceedToCaptureIntent()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun proceedToCaptureIntent() {
+        startActivityForResult(projectionManager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
     }
 
     private fun switchMode(mode: String) {
@@ -102,86 +297,159 @@ class MainActivity : AppCompatActivity() {
             panelRemote.visibility = View.GONE
             btnToggle.text = "📶 Start Wi-Fi Stream"
         } else {
-            btnTabRemote.setBackgroundColor(0xFF7C3AED.toInt())
+            btnTabRemote.setBackgroundColor(0xFF0284C7.toInt())
             btnTabRemote.setTextColor(0xFFFFFFFF.toInt())
             btnTabWifi.setBackgroundColor(0xFF334155.toInt())
             btnTabWifi.setTextColor(0xFF94A3B8.toInt())
             panelWifi.visibility = View.GONE
             panelRemote.visibility = View.VISIBLE
-            btnToggle.text = "🔴 Start Remote Broadcast"
+            btnToggle.text = "🌐 Start Remote Share"
         }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_MEDIA_PROJECTION && resultCode == Activity.RESULT_OK && data != null) {
-            val serverUrl = etServerUrl.text.toString().trim()
-            isStreaming = true
-            btnToggle.text = "⏹ Stop Streaming"
-            btnToggle.setBackgroundColor(0xFFDC2626.toInt())
-            btnTabWifi.isEnabled = false
-            btnTabRemote.isEnabled = false
-
-            if (activeMode == "WIFI") {
-                tvWifiStatus.text = "🟢 Streaming on Local Wi-Fi"
+        if (requestCode == REQUEST_MEDIA_PROJECTION) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                startStreamService(resultCode, data)
             } else {
-                val c1 = Random.nextInt(100, 999)
-                val c2 = Random.nextInt(100, 999)
-                roomCode = "$c1-$c2"
-                pin = Random.nextInt(1000, 9999).toString()
-                tvRoomCode.text = roomCode
-                tvPin.text = "PIN: $pin"
-                tvRemoteStatus.text = "🟢 Live Remote Room"
+                Toast.makeText(this, "Screen capture permission denied", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
 
-            val serviceIntent = Intent(this, MediaProjectionService::class.java).apply {
-                putExtra("RESULT_CODE", resultCode)
-                putExtra("DATA_INTENT", data)
-                putExtra("MODE", activeMode)
-                putExtra("ROOM_CODE", roomCode)
-                putExtra("PIN", pin)
-                putExtra("SERVER_URL", serverUrl)
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        updatePermissionIndicators()
+    }
+
+    private fun updatePinUi(enabled: Boolean) {
+        if (enabled) {
+            tvPin.visibility = View.VISIBLE
+            if (pin.isNotEmpty()) {
+                tvPin.text = "PIN: $pin"
+            } else {
+                tvPin.text = "PIN: ----"
             }
+            tvPin.setTextColor(0xFF38BDF8.toInt())
+        } else {
+            tvPin.visibility = View.VISIBLE
+            tvPin.text = "PIN: OFF (Open)"
+            tvPin.setTextColor(0xFF94A3B8.toInt())
+        }
+    }
+
+    private fun setupResolutionSelector() {
+        btnRes360 = findViewById(R.id.btnRes360)
+        btnRes480 = findViewById(R.id.btnRes480)
+        btnRes720 = findViewById(R.id.btnRes720)
+        btnRes1080 = findViewById(R.id.btnRes1080)
+        tvActiveResHint = findViewById(R.id.tvActiveResHint)
+
+        selectedResolution = prefs.getInt("STREAM_RESOLUTION", 480)
+        updateResolutionUi(selectedResolution)
+
+        btnRes360.setOnClickListener { setResolution(360) }
+        btnRes480.setOnClickListener { setResolution(480) }
+        btnRes720.setOnClickListener { setResolution(720) }
+        btnRes1080.setOnClickListener { setResolution(1080) }
+    }
+
+    private fun setResolution(res: Int) {
+        selectedResolution = res
+        prefs.edit().putInt("STREAM_RESOLUTION", res).apply()
+        updateResolutionUi(res)
+
+        if (isStreaming) {
+            val intent = Intent("com.axecast.stream.SET_QUALITY").apply {
+                putExtra("RESOLUTION", res)
+            }
+            sendBroadcast(intent)
+            Toast.makeText(this, "⚡ Switched to ${res}p Live", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun updateResolutionUi(res: Int) {
+        val buttons = listOf(btnRes360, btnRes480, btnRes720, btnRes1080)
+        val targets = listOf(360, 480, 720, 1080)
+
+        for (i in buttons.indices) {
+            val b = buttons[i]
+            if (targets[i] == res) {
+                b.setBackgroundColor(0xFF0284C7.toInt())
+                b.setTextColor(0xFFFFFFFF.toInt())
+            } else {
+                b.setBackgroundColor(0xFF0F172A.toInt())
+                b.setTextColor(0xFF94A3B8.toInt())
+            }
+        }
+
+        when (res) {
+            360 -> tvActiveResHint.text = "360p • Ultra Fast (Lowest Latency)"
+            480 -> tvActiveResHint.text = "480p • Low Latency (Recommended)"
+            720 -> tvActiveResHint.text = "720p • HD Sharp"
+            1080 -> tvActiveResHint.text = "1080p • Full HD"
+        }
+    }
+
+    private fun startStreamService(resultCode: Int, data: Intent) {
+        isStreaming = true
+        roomCode = "" // Force generate a brand new fresh code on every start
+        pin = ""
+        tvRoomCode.text = "--- ---"
+        btnToggle.text = "🛑 Stop Stream"
+        btnToggle.setBackgroundColor(0xFFDC2626.toInt())
+
+        val serviceIntent = Intent(this, MediaProjectionService::class.java).apply {
+            putExtra("RESULT_CODE", resultCode)
+            putExtra("DATA_INTENT", data)
+            putExtra("MODE", activeMode)
+            putExtra("ROOM_CODE", "") // Pass empty to guarantee fresh server-side / client-side code generation
+            putExtra("SERVER_URL", etServerUrl.text.toString().trim())
+            putExtra("PIN_ENABLED", switchPinLock.isChecked)
+            putExtra("RESOLUTION", selectedResolution)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(serviceIntent)
         } else {
-            Toast.makeText(this, "Screen capture permission required", Toast.LENGTH_SHORT).show()
+            startService(serviceIntent)
         }
     }
 
     private fun stopStreamService() {
-        stopService(Intent(this, MediaProjectionService::class.java))
         isStreaming = false
-        btnTabWifi.isEnabled = true
-        btnTabRemote.isEnabled = true
+        roomCode = ""
+        pin = ""
+        btnToggle.text = if (activeMode == "WIFI") "📶 Start Wi-Fi Stream" else "🌐 Start Remote Share"
         btnToggle.setBackgroundColor(0xFF16A34A.toInt())
+        tvRoomCode.text = "--- ---"
+        tvWifiStatus.text = "⚫ Idle"
+        tvRemoteStatus.text = "⚫ Idle"
+        updatePinUi(switchPinLock.isChecked)
 
-        if (activeMode == "WIFI") {
-            tvWifiStatus.text = "⚫ Idle (Ready to stream in same Wi-Fi)"
-            btnToggle.text = "📶 Start Wi-Fi Stream"
-        } else {
-            tvRemoteStatus.text = "⚫ Idle"
-            btnToggle.text = "🔴 Start Remote Broadcast"
-            tvRoomCode.text = "--- ---"
-            tvPin.text = "PIN: ----"
-        }
+        val serviceIntent = Intent(this, MediaProjectionService::class.java)
+        stopService(serviceIntent)
     }
 
     private fun getLocalIpAddress(): String {
         try {
-            val en = NetworkInterface.getNetworkInterfaces()
-            while (en.hasMoreElements()) {
-                val intf = en.nextElement()
-                val enumIpAddr = intf.inetAddresses
-                while (enumIpAddr.hasMoreElements()) {
-                    val inetAddress = enumIpAddr.nextElement()
-                    if (!inetAddress.isLoopbackAddress && inetAddress is Inet4Address) {
-                        return inetAddress.hostAddress ?: "192.168.1.xxx"
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val iface = interfaces.nextElement()
+                if (iface.isLoopback || !iface.isUp) continue
+                val addresses = iface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val addr = addresses.nextElement()
+                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
+                        val host = addr.hostAddress
+                        if (host != null && (host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172."))) {
+                            return host
+                        }
                     }
                 }
             }
-        } catch (ex: Exception) {
-            // Fallback
-        }
+        } catch (e: Exception) {}
         return "192.168.1.xxx"
     }
 }

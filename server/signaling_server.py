@@ -13,7 +13,17 @@ import random
 import asyncio
 import logging
 import argparse
-from typing import Dict, Set, Optional
+from typing import Dict, Set, Optional, Callable
+
+# Configure logging to file
+try:
+    fh_server = logging.FileHandler("/tmp/axecast_signaling.log")
+    fh_server.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler(), fh_server])
+except Exception:
+    logging.basicConfig(level=logging.INFO)
+
+logger = logging.getLogger("axecast-relay")
 
 try:
     import websockets
@@ -22,7 +32,6 @@ except ImportError:
     print("❌ Missing dependency: pip install websockets")
     sys.exit(1)
 
-logger = logging.getLogger("axecast-relay")
 
 # ──────────────────────────────────────────────
 # Room & Session Data Structures
@@ -39,6 +48,7 @@ class RoomSession:
         self.publisher_info: dict = {}
         self.max_age_seconds = 1800  # 30 minutes auto-expire
         self.pin: str = f"{random.randint(1000, 9999)}"
+        self.last_offer: Optional[str] = None
     
     @property
     def is_expired(self) -> bool:
@@ -52,9 +62,10 @@ class RoomSession:
 class RelayServer:
     """AxeCast WebSocket Signaling & Frame/Log Relay Server."""
     
-    def __init__(self, host: str = "0.0.0.0", port: int = 9820):
+    def __init__(self, host: str = "0.0.0.0", port: int = 9820, on_room_created: Optional[Callable[[str, str], None]] = None):
         self.host = host
         self.port = port
+        self.on_room_created = on_room_created
         self.rooms: Dict[str, RoomSession] = {}
         self._cleanup_task: Optional[asyncio.Task] = None
     
@@ -73,7 +84,14 @@ class RelayServer:
         
         try:
             async for raw_msg in websocket:
+                if isinstance(raw_msg, bytes):
+                    # Direct binary video frame relay (ultra-fast, zero JSON parsing overhead)
+                    if role == "publisher" and room_code:
+                        await self._relay_to_subscribers(room_code, raw_msg)
+                    continue
+
                 try:
+                    logger.info(f"[{role}] Room {room_code} | Msg: {str(raw_msg)[:150]}")
                     msg = json.loads(raw_msg)
                 except json.JSONDecodeError:
                     continue
@@ -85,11 +103,7 @@ class RelayServer:
                     role = "publisher"
                     room_code = await self._handle_create_room(websocket, msg)
                 
-                elif msg_type == "frame":
-                    if role == "publisher" and room_code:
-                        await self._relay_to_subscribers(room_code, raw_msg)
-                
-                elif msg_type == "log":
+                elif msg_type in ("frame", "log", "logs_batch", "packages_list", "active_app"):
                     if role == "publisher" and room_code:
                         await self._relay_to_subscribers(room_code, raw_msg)
                 
@@ -103,10 +117,19 @@ class RelayServer:
                     role = "subscriber"
                     room_code = await self._handle_join_room(websocket, msg)
                 
-                elif msg_type == "touch" or msg_type == "key" or msg_type == "button":
+                elif msg_type in ("touch", "key", "button", "request_offer"):
                     if role == "subscriber" and room_code:
                         await self._relay_to_publisher(room_code, raw_msg)
                 
+                # ── WebRTC Signaling Messages (Offer / Answer / ICE Candidates) ──
+                elif msg_type in ("webrtc_offer", "webrtc_answer", "webrtc_ice"):
+                    if role == "publisher" and room_code:
+                        if msg_type == "webrtc_offer" and room_code in self.rooms:
+                            self.rooms[room_code].last_offer = raw_msg
+                        await self._relay_to_subscribers(room_code, raw_msg)
+                    elif role == "subscriber" and room_code:
+                        await self._relay_to_publisher(room_code, raw_msg)
+
                 # ── Common Messages ──
                 elif msg_type == "ping":
                     await websocket.send(json.dumps({"type": "pong", "ts": time.time()}))
@@ -129,18 +152,30 @@ class RelayServer:
         """Publisher requests a new room."""
         requested_code = msg.get("room_code", "").strip()
         if requested_code:
-            room_code = self.normalize_code(requested_code)
+            norm = self.normalize_code(requested_code)
+            room_code = f"{norm[:3]}-{norm[3:]}" if len(norm) == 6 else requested_code
         else:
-            room_code = self.normalize_code(self.generate_room_code())
+            room_code = self.generate_room_code()
             
-        pin = msg.get("pin") or f"{random.randint(1000, 9999)}"
+        pin = msg.get("pin")
+        if pin is None:
+            pin = f"{random.randint(1000, 9999)}"
+        else:
+            pin = str(pin).strip()
+            
         room = RoomSession(room_code, websocket)
         room.pin = pin
         room.publisher_info = msg.get("device_info", {})
         self.rooms[room_code] = room
         
-        logger.info(f"📱 Room created: {room_code} (PIN: {room.pin})")
+        logger.info(f"📱 Room created: {room_code} (PIN: {room.pin if room.pin else 'OFF / Open'})")
         
+        if self.on_room_created:
+            try:
+                self.on_room_created(room_code, room.pin)
+            except Exception as e:
+                logger.warning(f"Error in on_room_created callback: {e}")
+
         await websocket.send(json.dumps({
             "type": "room_created",
             "room_code": room_code,
@@ -148,23 +183,31 @@ class RelayServer:
         }))
         return room_code
     
+    def _find_room(self, code: str):
+        """Find room by exact key or normalized 6 digits."""
+        if not code:
+            return None
+        if code in self.rooms:
+            return code, self.rooms[code]
+        norm = self.normalize_code(code)
+        for r_code, session in self.rooms.items():
+            if self.normalize_code(r_code) == norm:
+                return r_code, session
+        return None
+
     async def _handle_join_room(self, websocket, msg) -> Optional[str]:
         """Subscriber joins an existing room by code."""
         raw_code = msg.get("room_code", "").strip()
-        room_code = self.normalize_code(raw_code)
+        room_match = self._find_room(raw_code)
         
-        if room_code not in self.rooms:
-            # Fallback exact search
-            if raw_code in self.rooms:
-                room_code = raw_code
-            else:
-                await websocket.send(json.dumps({
-                    "type": "error",
-                    "message": f"Room '{raw_code}' not found or expired."
-                }))
-                return None
+        if not room_match:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "message": f"Room '{raw_code}' not found or expired."
+            }))
+            return None
         
-        room = self.rooms[room_code]
+        room_code, room = room_match
         
         if room.is_expired:
             del self.rooms[room_code]
@@ -174,6 +217,24 @@ class RelayServer:
             }))
             return None
         
+        # Check PIN authentication if room has PIN configured
+        req_pin = str(msg.get("pin", "")).strip()
+        if room.pin:
+            if not req_pin:
+                await websocket.send(json.dumps({
+                    "type": "pin_required",
+                    "room_code": room_code,
+                    "message": "This room is protected by a 4-digit PIN."
+                }))
+                return None
+            elif req_pin != str(room.pin).strip():
+                await websocket.send(json.dumps({
+                    "type": "error",
+                    "error_code": "INVALID_PIN",
+                    "message": "Incorrect PIN. Please check the 4-digit PIN on the phone screen."
+                }))
+                return None
+        
         room.subscribers.add(websocket)
         logger.info(f"💻 Subscriber joined room {room_code} (total: {room.subscriber_count})")
         
@@ -182,6 +243,13 @@ class RelayServer:
             "room_code": room_code,
             "device_info": room.publisher_info
         }))
+        
+        # If publisher already posted a WebRTC offer, forward it to this subscriber immediately
+        if room.last_offer:
+            try:
+                await websocket.send(room.last_offer)
+            except Exception:
+                pass
         
         # Notify publisher that a new viewer joined
         try:

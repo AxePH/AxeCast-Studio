@@ -11,12 +11,27 @@ import base64
 import asyncio
 import logging
 import threading
+import os
 from typing import Callable, Optional, Dict, Any
+
+# Force file logging for debugging
+fh = logging.FileHandler("/tmp/axecast_remote.log")
+fh.setLevel(logging.DEBUG)
+logger = logging.getLogger("axecast-remote")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(fh)
 
 try:
     import websockets
 except ImportError:
     websockets = None
+
+try:
+    from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceServer, RTCConfiguration, RTCIceCandidate
+    import av
+    HAS_AIORTC = True
+except ImportError:
+    HAS_AIORTC = False
 
 from PIL import Image
 
@@ -35,12 +50,14 @@ class LogEntry:
         "F": "#dc2626",  # Fatal   - dark red
     }
     
-    def __init__(self, raw: str, level: str = "I", tag: str = "", message: str = "", timestamp: str = ""):
+    def __init__(self, raw: str, level: str = "I", tag: str = "", message: str = "", timestamp: str = "", pid: int = 0, package: str = ""):
         self.raw = raw
         self.level = level.upper()[:1] if level else "I"
         self.tag = tag
         self.message = message
         self.timestamp = timestamp or time.strftime("%H:%M:%S")
+        self.pid = pid
+        self.package = package
     
     @classmethod
     def from_dict(cls, data: dict) -> "LogEntry":
@@ -49,7 +66,9 @@ class LogEntry:
             level=data.get("level", "I"),
             tag=data.get("tag", ""),
             message=data.get("message", ""),
-            timestamp=data.get("timestamp", "")
+            timestamp=data.get("timestamp", ""),
+            pid=data.get("pid", 0),
+            package=data.get("package", "")
         )
     
     @property
@@ -58,7 +77,27 @@ class LogEntry:
     
     @property
     def display_text(self) -> str:
-        return f"[{self.timestamp}] {self.level}/{self.tag}: {self.message}"
+        pkg_part = f"[{self.package}] " if self.package else ""
+        return f"[{self.timestamp}] {self.level} {pkg_part}{self.tag}: {self.message}"
+
+
+def normalize_relay_url(server_url: str) -> str:
+    """Sanitizes and auto-corrects relay server URLs (including stripping invalid ports from cloud domains)."""
+    import re
+    url = str(server_url).strip()
+    if url.startswith("https://"):
+        url = "wss://" + url[8:]
+    elif url.startswith("http://"):
+        url = "ws://" + url[7:]
+    elif not url.startswith("ws://") and not url.startswith("wss://"):
+        url = "wss://" + url
+    
+    # Auto-strip port 9820/8080 if pointing to cloud domains (Render, Fly, Heroku, etc.)
+    cloud_domains = ("onrender.com", "fly.dev", "railway.app", "herokuapp.com", "pages.dev", "appspot.com")
+    if any(cd in url.lower() for cd in cloud_domains):
+        url = re.sub(r":(?:9820|8080)", "", url)
+        
+    return url
 
 
 class RemoteSessionManager:
@@ -97,13 +136,36 @@ class RemoteSessionManager:
         self.latency_ms: float = 0.0
         self.frames_received: int = 0
         self._last_fps_time: float = 0
+        self.pin: str = ""
         self._fps_frame_count: int = 0
+
+        # WebRTC & Real-time Speedometer
+        self.pc = None
+        self.is_p2p: bool = False
+        self.speed_mbps: float = 0.0
+        self.speed_kbps: float = 0.0
+        self.bytes_received: int = 0
+        self._window_bytes: int = 0
+        self._last_speed_time: float = time.time()
+
+    def _record_bytes(self, num_bytes: int):
+        self.bytes_received += num_bytes
+        self._window_bytes += num_bytes
+        now = time.time()
+        elapsed = now - self._last_speed_time
+        if elapsed >= 0.7:
+            self.speed_kbps = (self._window_bytes / 1024.0) / elapsed
+            self.speed_mbps = ((self._window_bytes * 8.0) / (1024.0 * 1024.0)) / elapsed
+            self._window_bytes = 0
+            self._last_speed_time = now
     
-    def connect(self, server_url: str, room_code: str,
+    def connect(self, server_url: str, room_code: str, pin: str = "",
                 on_frame: Optional[Callable] = None,
                 on_log: Optional[Callable] = None,
                 on_status: Optional[Callable] = None,
-                on_device_info: Optional[Callable] = None):
+                on_device_info: Optional[Callable] = None,
+                on_packages: Optional[Callable] = None,
+                on_active_app: Optional[Callable] = None):
         """
         Connect to a remote session room (non-blocking, runs in background thread).
         """
@@ -113,20 +175,20 @@ class RemoteSessionManager:
             return
         
         # Sanitize server URL
-        url = server_url.strip()
-        if url.startswith("https://"):
-            url = "wss://" + url[8:]
-        elif url.startswith("http://"):
-            url = "ws://" + url[7:]
-        elif not url.startswith("ws://") and not url.startswith("wss://"):
-            url = "wss://" + url
+        self.server_url = normalize_relay_url(server_url)
+        self.pin = str(pin).strip()
+        digits = "".join(c for c in str(room_code) if c.isdigit())
+        if len(digits) == 6:
+            self.room_code = f"{digits[:3]}-{digits[3:]}"
+        else:
+            self.room_code = str(room_code).strip()
             
-        self.server_url = url
-        self.room_code = room_code.replace("-", "").replace(" ", "").strip().upper()
         self._on_frame = on_frame
         self._on_log = on_log
         self._on_status = on_status
         self._on_device_info = on_device_info
+        self._on_packages = on_packages
+        self._on_active_app = on_active_app
         self._stop_event.clear()
         
         self._thread = threading.Thread(target=self._run_async_loop, daemon=True)
@@ -191,10 +253,20 @@ class RemoteSessionManager:
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._connect_and_receive())
+        except (asyncio.CancelledError, RuntimeError):
+            pass
         except Exception as e:
-            logger.warning(f"Remote session loop error: {e}")
+            logger.debug(f"Remote session loop ended: {e}")
         finally:
-            self._loop.close()
+            try:
+                pending = asyncio.all_tasks(self._loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                self._loop.close()
+            except Exception:
+                pass
             self.connected = False
     
     async def _connect_and_receive(self):
@@ -205,6 +277,7 @@ class RemoteSessionManager:
         try:
             async with websockets.connect(
                 self.server_url,
+                open_timeout=8,
                 max_size=2**22,  # 4MB max frame
                 close_timeout=5
             ) as ws:
@@ -213,7 +286,8 @@ class RemoteSessionManager:
                 # Join the room
                 await ws.send(json.dumps({
                     "type": "join_room",
-                    "room_code": self.room_code
+                    "room_code": self.room_code,
+                    "pin": self.pin
                 }))
                 
                 self._last_fps_time = time.time()
@@ -223,7 +297,13 @@ class RemoteSessionManager:
                     if self._stop_event.is_set():
                         break
                     
+                    if isinstance(raw_msg, bytes):
+                        # Direct binary JPEG frame (Zero JSON / Base64 parsing overhead)
+                        self._handle_binary_frame(raw_msg)
+                        continue
+
                     try:
+                        logger.debug(f"Received WS msg: {raw_msg[:100]}")
                         msg = json.loads(raw_msg)
                     except json.JSONDecodeError:
                         continue
@@ -237,6 +317,14 @@ class RemoteSessionManager:
                             self._on_status("connected", f"Connected to room {self.room_code}")
                         if self._on_device_info and self.device_info:
                             self._on_device_info(self.device_info)
+                        # Request WebRTC offer from mobile device
+                        try:
+                            await ws.send(json.dumps({
+                                "type": "request_offer",
+                                "room_code": self.room_code
+                            }))
+                        except Exception:
+                            pass
                     
                     elif msg_type == "error":
                         if self._on_status:
@@ -248,12 +336,43 @@ class RemoteSessionManager:
                     
                     elif msg_type == "log":
                         self._handle_log(msg)
+
+                    elif msg_type == "logs_batch":
+                        for log_item in msg.get("logs", []):
+                            self._handle_log(log_item)
                     
                     elif msg_type == "device_info":
                         self.device_info = msg.get("info", {})
                         if self._on_device_info:
                             self._on_device_info(self.device_info)
                     
+                    elif msg_type == "packages_list":
+                        pkgs = msg.get("packages", [])
+                        if self._on_packages and pkgs:
+                            self._on_packages(pkgs)
+                            
+                    elif msg_type == "active_app":
+                        pkg = msg.get("package", "")
+                        if self._on_active_app and pkg:
+                            self._on_active_app(pkg)
+                    
+                    elif msg_type == "webrtc_offer":
+                        logger.debug("Received WebRTC offer in websocket loop!")
+                        if HAS_AIORTC:
+                            async def safe_handle():
+                                try:
+                                    logger.debug("Calling _handle_webrtc_offer...")
+                                    await self._handle_webrtc_offer(msg, ws)
+                                except Exception as e:
+                                    logger.error(f"❌ Error in _handle_webrtc_offer: {e}", exc_info=True)
+                            asyncio.create_task(safe_handle())
+                        else:
+                            logger.error("❌ Received WebRTC offer but aiortc is not installed!")
+
+                    elif msg_type == "webrtc_ice":
+                        if HAS_AIORTC and self.pc:
+                            asyncio.create_task(self._handle_webrtc_ice(msg))
+
                     elif msg_type == "room_closed":
                         if self._on_status:
                             self._on_status("closed", msg.get("message", "Room closed."))
@@ -274,6 +393,11 @@ class RemoteSessionManager:
             if self._on_status:
                 self._on_status("error", f"Connection error: {str(e)}")
         finally:
+            if self.pc:
+                try:
+                    asyncio.create_task(self.pc.close())
+                except Exception:
+                    pass
             self.ws = None
             self.connected = False
     
@@ -285,6 +409,7 @@ class RemoteSessionManager:
         
         try:
             jpg_bytes = base64.b64decode(frame_data)
+            self._record_bytes(len(jpg_bytes))
             img = Image.open(io.BytesIO(jpg_bytes)).convert("RGB")
             
             # FPS calculation
@@ -301,12 +426,176 @@ class RemoteSessionManager:
                 self._on_frame(img)
         except Exception as e:
             logger.debug(f"Frame decode error: {e}")
+
+    def _handle_binary_frame(self, raw_bytes: bytes):
+        """Directly decode binary JPEG frame without Base64 overhead."""
+        try:
+            self._record_bytes(len(raw_bytes))
+            img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+            
+            self.frames_received += 1
+            self._fps_frame_count += 1
+            now = time.time()
+            elapsed = now - self._last_fps_time
+            if elapsed >= 1.0:
+                self.fps = self._fps_frame_count / elapsed
+                self._fps_frame_count = 0
+                self._last_fps_time = now
+            
+            if self._on_frame:
+                self._on_frame(img)
+        except Exception as e:
+            logger.debug(f"Binary frame decode error: {e}")
     
     def _handle_log(self, msg: dict):
         """Parse log message and invoke callback."""
+        self._record_bytes(len(msg.get("message", "")) + 50)
         entry = LogEntry.from_dict(msg)
         if self._on_log:
             self._on_log(entry)
+
+    async def _handle_webrtc_offer(self, msg: dict, ws):
+        logger.debug("_handle_webrtc_offer triggered!")
+        if not HAS_AIORTC:
+            logger.debug("HAS_AIORTC is false, returning")
+            return
+        if self.is_p2p:
+            logger.debug("P2P already established, ignoring duplicate offer")
+            return
+        try:
+            sdp = msg.get("sdp", "")
+            if not sdp:
+                logger.debug("SDP is empty, returning")
+                return
+            
+            logger.debug(f"SDP length: {len(sdp)}")
+
+            config = RTCConfiguration(iceServers=[
+                RTCIceServer(urls=["stun:stun.l.google.com:19302"]),
+                RTCIceServer(urls=["stun:stun1.l.google.com:19302"]),
+                RTCIceServer(urls=["stun:stun2.l.google.com:19302"]),
+            ])
+            self.pc = RTCPeerConnection(configuration=config)
+
+            @self.pc.on("track")
+            def on_track(track):
+                logger.debug(f"Received track: {track.kind}")
+                if track.kind == "video":
+                    asyncio.create_task(self._consume_video_track(track))
+
+            @self.pc.on("datachannel")
+            def on_datachannel(channel):
+                logger.debug("Datachannel created")
+                @channel.on("message")
+                def on_msg(message):
+                    self._record_bytes(len(message) if isinstance(message, (str, bytes)) else 64)
+                    try:
+                        data = json.loads(message)
+                        m_type = data.get("type", "")
+                        if m_type == "log":
+                            self._handle_log(data)
+                        elif m_type == "device_info":
+                            self.device_info = data.get("info", {})
+                            if self._on_device_info:
+                                self._on_device_info(self.device_info)
+                        elif m_type == "packages_list":
+                            pkgs = data.get("packages", [])
+                            if self._on_packages and pkgs:
+                                self._on_packages(pkgs)
+                        elif m_type == "active_app":
+                            pkg = data.get("package", "")
+                            if self._on_active_app and pkg:
+                                self._on_active_app(pkg)
+                    except Exception:
+                        pass
+
+            @self.pc.on("connectionstatechange")
+            async def on_connectionstatechange():
+                logger.debug(f"Connection state is {self.pc.connectionState}")
+
+            @self.pc.on("iceconnectionstatechange")
+            async def on_iceconnectionstatechange():
+                logger.debug(f"ICE connection state is {self.pc.iceConnectionState}")
+
+            @self.pc.on("icecandidate")
+            async def on_ice(candidate):
+                if candidate:
+                    logger.debug("Found local ICE candidate, sending...")
+                    await ws.send(json.dumps({
+                        "type": "webrtc_ice",
+                        "room_code": self.room_code,
+                        "candidate": {
+                            "candidate": candidate.candidate,
+                            "sdpMid": candidate.sdpMid,
+                            "sdpMLineIndex": candidate.sdpMLineIndex
+                        }
+                    }))
+
+            logger.debug("Setting remote description...")
+            offer = RTCSessionDescription(sdp=sdp, type="offer")
+            await self.pc.setRemoteDescription(offer)
+            
+            logger.debug("Creating answer...")
+            answer = await self.pc.createAnswer()
+            
+            logger.debug("Setting local description...")
+            await self.pc.setLocalDescription(answer)
+
+            logger.debug("Sending webrtc_answer...")
+            await ws.send(json.dumps({
+                "type": "webrtc_answer",
+                "room_code": self.room_code,
+                "sdp": self.pc.localDescription.sdp
+            }))
+            self.is_p2p = True
+            logger.debug("P2P established!")
+            if self._on_status:
+                self._on_status("connected", f"⚡ WebRTC Direct P2P Connected (Room {self.room_code})")
+        except Exception as e:
+            logger.error(f"WebRTC offer error: {e}", exc_info=True)
+
+    async def _handle_webrtc_ice(self, msg: dict):
+        if not self.pc or not HAS_AIORTC:
+            return
+        try:
+            cand_data = msg.get("candidate")
+            if cand_data and isinstance(cand_data, dict):
+                cand_str = cand_data.get("candidate", "")
+                sdp_mid = cand_data.get("sdpMid")
+                sdp_mline_index = cand_data.get("sdpMLineIndex")
+                if cand_str:
+                    from aiortc.sdp import candidate_from_sdp
+                    c = candidate_from_sdp(cand_str)
+                    c.sdpMid = sdp_mid
+                    c.sdpMLineIndex = sdp_mline_index
+                    await self.pc.addIceCandidate(c)
+        except Exception:
+            pass
+
+    async def _consume_video_track(self, track):
+        logger.debug(f"Starting to consume video track: {track.id}")
+        while not self._stop_event.is_set():
+            try:
+                frame = await track.recv()
+                # Offload YUV -> RGB conversion to avoid blocking the asyncio event loop
+                img = await asyncio.to_thread(frame.to_image)
+                
+                self._record_bytes(frame.planes[0].buffer_size if frame.planes else 25000)
+                self.frames_received += 1
+                self._fps_frame_count += 1
+                now = time.time()
+                elapsed = now - self._last_fps_time
+                if elapsed >= 1.0:
+                    self.fps = self._fps_frame_count / elapsed
+                    self._fps_frame_count = 0
+                    self._last_fps_time = now
+
+                if self._on_frame:
+                    self._on_frame(img)
+            except Exception as e:
+                logger.error(f"Error consuming video track: {e}", exc_info=True)
+                break
+        logger.debug("Video track consumption ended")
 
 
 class EmbeddedRelayServer:
@@ -315,8 +604,9 @@ class EmbeddedRelayServer:
     This allows the desktop app to act as its own relay (no external server needed).
     """
     
-    def __init__(self, port: int = 9820):
+    def __init__(self, port: int = 9820, on_room_created: Optional[Callable[[str, str], None]] = None):
         self.port = port
+        self.on_room_created = on_room_created
         self._thread: Optional[threading.Thread] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._server = None
@@ -343,7 +633,7 @@ class EmbeddedRelayServer:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
         
-        server = RelayServer(host="0.0.0.0", port=self.port)
+        server = RelayServer(host="0.0.0.0", port=self.port, on_room_created=self.on_room_created)
         try:
             self._loop.run_until_complete(server.start())
         except Exception:
@@ -366,4 +656,57 @@ def get_or_start_embedded_server(port: int = 9820) -> EmbeddedRelayServer:
         _SHARED_EMBEDDED_SERVER = EmbeddedRelayServer(port=port)
         _SHARED_EMBEDDED_SERVER.start()
     return _SHARED_EMBEDDED_SERVER
+
+
+async def _async_check_room(server_url: str, room_code: str, pin: str = "", timeout: float = 6.0) -> tuple:
+    """Connect to relay server and test if room exists, pin is needed, or open."""
+    if not websockets:
+        return False, "Missing 'websockets' package."
+
+    url = normalize_relay_url(server_url)
+
+    digits = "".join(c for c in str(room_code) if c.isdigit())
+    code = f"{digits[:3]}-{digits[3:]}" if len(digits) == 6 else str(room_code).strip()
+
+    try:
+        async with websockets.connect(url, open_timeout=timeout, close_timeout=2) as ws:
+            join_msg = {
+                "type": "join_room",
+                "room_code": code,
+                "pin": pin
+            }
+            await ws.send(json.dumps(join_msg))
+            resp_raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+            resp = json.loads(resp_raw)
+            msg_type = resp.get("type")
+            if msg_type == "joined":
+                return True, "CONNECTED"
+            elif msg_type == "pin_required":
+                return True, "PIN_REQUIRED"
+            elif msg_type == "error":
+                err_code = resp.get("error_code", "")
+                if err_code == "INVALID_PIN":
+                    return False, "INVALID_PIN"
+                return False, resp.get("message", f"Room '{code}' not found or expired.")
+            else:
+                return True, "CONNECTED"
+    except asyncio.TimeoutError:
+        return False, "Connection timed out. Server or room not responding."
+    except Exception as e:
+        err = str(e)
+        if "Connection refused" in err or "Cannot connect" in err or "getaddrinfo" in err:
+            return False, f"Cannot reach relay server at {url}"
+        return False, f"Connection failed: {err}"
+
+
+def check_room_availability(server_url: str, room_code: str, pin: str = "", timeout: float = 6.0) -> tuple:
+    """Thread-safe synchronous check for room availability. Returns (success, status_code_or_message)."""
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(_async_check_room(server_url, room_code, pin, timeout))
+        loop.close()
+        return result
+    except Exception as e:
+        return False, str(e)
 

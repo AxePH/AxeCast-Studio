@@ -150,6 +150,15 @@ class MainActivity : AppCompatActivity() {
             etServerUrl.setText(BuildConfig.SERVER_URL)
         }
 
+        val rowPermLogs = findViewById<View>(R.id.rowPermLogs)
+        rowPermLogs?.setOnClickListener {
+            if (!hasUsageAccessPermission()) {
+                promptUsageAccessPermission()
+            } else {
+                Toast.makeText(this, "Active App Detection permission is already granted! 🟢", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         val ip = getLocalIpAddress()
         tvWifiUrl.text = "http://$ip:8080/stream"
 
@@ -190,6 +199,45 @@ class MainActivity : AppCompatActivity() {
         try { unregisterReceiver(statusReceiver) } catch (ignored: Exception) {}
     }
 
+    private fun hasUsageAccessPermission(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as? android.app.AppOpsManager ?: return false
+        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(
+                android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                packageName
+            )
+        } else {
+            appOps.checkOpNoThrow(
+                android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+                android.os.Process.myUid(),
+                packageName
+            )
+        }
+        return mode == android.app.AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun promptUsageAccessPermission() {
+        AlertDialog.Builder(this)
+            .setTitle("📱 Enable Active App Detection")
+            .setMessage("To automatically detect which app is currently open and filter logs for you, please grant 'Usage Access' permission.\n\nTap 'Open Settings' and switch ON for AxeCast Stream.")
+            .setPositiveButton("Open Settings") { _, _ ->
+                try {
+                    val intent = Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                        data = android.net.Uri.parse("package:$packageName")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    startActivity(Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    })
+                }
+            }
+            .setNegativeButton("Later", null)
+            .show()
+    }
+
     private fun requestInitialPermissions() {
         val permissionsNeeded = ArrayList<String>()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -200,6 +248,16 @@ class MainActivity : AppCompatActivity() {
         if (permissionsNeeded.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, permissionsNeeded.toTypedArray(), REQUEST_PERMISSIONS)
         }
+
+        // Also prompt for Usage Access if not granted
+        if (!hasUsageAccessPermission()) {
+            val hasPrompted = prefs.getBoolean("PROMPTED_USAGE_ACCESS", false)
+            if (!hasPrompted) {
+                prefs.edit().putBoolean("PROMPTED_USAGE_ACCESS", true).apply()
+                promptUsageAccessPermission()
+            }
+        }
+
         updatePermissionIndicators()
     }
 
@@ -219,13 +277,14 @@ class MainActivity : AppCompatActivity() {
             tvPermNotif.setTextColor(0xFF22C55E.toInt())
         }
 
-        // 2. System Logs (READ_LOGS)
+        // 2. Active App Detection (Usage Access & Logs)
+        val hasUsage = hasUsageAccessPermission()
         val hasLogs = checkCallingOrSelfPermission(Manifest.permission.READ_LOGS) == PackageManager.PERMISSION_GRANTED
-        if (hasLogs) {
+        if (hasUsage || hasLogs) {
             tvPermLogs.text = "🟢 Granted"
             tvPermLogs.setTextColor(0xFF22C55E.toInt())
         } else {
-            tvPermLogs.text = "🟡 Needs ADB"
+            tvPermLogs.text = "🟡 Tap to Grant"
             tvPermLogs.setTextColor(0xFFF59E0B.toInt())
         }
 

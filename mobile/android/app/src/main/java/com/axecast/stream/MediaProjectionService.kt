@@ -191,9 +191,61 @@ class MediaProjectionService : Service() {
                 connectWebSocket(currentRoomCode, serverUrl)
             }
             startLogcatStreaming()
+            startActiveAppPoller()
         }
 
         return START_NOT_STICKY
+    }
+
+    private var activeAppPollerThread: Thread? = null
+
+    private fun startActiveAppPoller() {
+        activeAppPollerThread?.interrupt()
+        activeAppPollerThread = Thread {
+            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? android.app.usage.UsageStatsManager
+            while (isStreaming && !Thread.currentThread().isInterrupted) {
+                try {
+                    if (usm != null) {
+                        val endTime = System.currentTimeMillis()
+                        val beginTime = endTime - 5000
+                        val events = usm.queryEvents(beginTime, endTime)
+                        val event = android.app.usage.UsageEvents.Event()
+                        var topApp: String? = null
+                        while (events.hasNextEvent()) {
+                            events.getNextEvent(event)
+                            if (event.eventType == android.app.usage.UsageEvents.Event.ACTIVITY_RESUMED) {
+                                topApp = event.packageName
+                            }
+                        }
+                        
+                        if (topApp != null && topApp != currentActivePkg && 
+                            !topApp.startsWith("com.android.systemui") && 
+                            !topApp.startsWith("com.axecast.stream")) {
+                            currentActivePkg = topApp
+                            val actMsg = JSONObject().apply {
+                                put("type", "active_app")
+                                put("package", topApp)
+                            }
+                            if (dataChannel?.state() == org.webrtc.DataChannel.State.OPEN) {
+                                val buffer = org.webrtc.DataChannel.Buffer(java.nio.ByteBuffer.wrap(actMsg.toString().toByteArray()), false)
+                                dataChannel?.send(buffer)
+                            } else {
+                                webSocketClient?.send(actMsg.toString())
+                            }
+                            Log.i("AxeCast", "⚡ Detected foreground active app via UsageStats: $topApp")
+                        }
+                    }
+                    Thread.sleep(1000)
+                } catch (e: InterruptedException) {
+                    break
+                } catch (e: Exception) {
+                    try { Thread.sleep(2000) } catch (ignored: Exception) {}
+                }
+            }
+        }.apply {
+            isDaemon = true
+            start()
+        }
     }
 
     private fun setupWindowMetrics() {
@@ -818,6 +870,7 @@ class MediaProjectionService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         isStreaming = false
+        try { activeAppPollerThread?.interrupt() } catch (ignored: Exception) {}
         try { logcatProcess?.destroy() } catch (ignored: Exception) {}
         try { logcatThread?.interrupt() } catch (ignored: Exception) {}
         try { httpServerSocket?.close() } catch (ignored: Exception) {}

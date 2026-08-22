@@ -358,19 +358,22 @@
                     android:textStyle="bold" />
             </LinearLayout>
 
-            <!-- Row 2: System Logs -->
+            <!-- Row 2: Active App Detection -->
             <LinearLayout
+                android:id="@+id/rowPermLogs"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center_vertical"
+                android:background="?android:attr/selectableItemBackground"
+                android:paddingVertical="2dp"
                 android:layout_marginTop="6dp">
 
                 <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="📜 System Logcat (READ_LOGS)"
+                    android:text="📱 Active App Detection (Usage)"
                     android:textColor="#CBD5E1"
                     android:textSize="12sp" />
 

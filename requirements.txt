@@ -9,3 +9,4 @@ tkinterdnd2>=0.4.2
 aiortc>=1.15.0
 av>=17.1.0
 python-dotenv>=1.0.0
+pyserial>=3.5

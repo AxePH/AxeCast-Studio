@@ -184,6 +184,18 @@ class MainWindow(BaseWindow):
         )
         self.theme_btn.pack(side="right", padx=(6, 0))
         
+        self.printer_btn = ctk.CTkButton(
+            right_frame,
+            text="🖨️ AxePrint Studio",
+            width=135,
+            height=30,
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color=("#059669", "#047857"),
+            hover_color=("#047857", "#065f46"),
+            command=self._open_thermal_printer
+        )
+        self.printer_btn.pack(side="right", padx=(6, 0))
+        
         self.sqlite_btn = ctk.CTkButton(
             right_frame,
             text="🗄 AxeSQL Studio",
@@ -805,6 +817,17 @@ class MainWindow(BaseWindow):
                     self._propagate_theme(sub)
             except Exception:
                 pass
+
+    def _open_thermal_printer(self):
+        """Opens standalone Virtual Thermal Printer Studio dialog."""
+        if hasattr(self, "thermal_printer_dialog") and self.thermal_printer_dialog and self.thermal_printer_dialog.winfo_exists():
+            self.thermal_printer_dialog.lift()
+            self.thermal_printer_dialog.focus()
+            return
+            
+        from ui.thermal_printer_dialog import ThermalPrinterDialog
+        self.thermal_printer_dialog = ThermalPrinterDialog(self)
+        self.thermal_printer_dialog.focus_set()
 
     def _open_sqlite_studio(self):
         """Opens standalone SQLite Studio dialog."""

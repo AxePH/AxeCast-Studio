@@ -4,6 +4,23 @@ All notable changes to **AxeCast Studio** are documented in this file.
 
 ---
 
+## [1.0.5] - 2026-09-02
+
+### 🌟 Added
+* 🖨️ **AxePrint Studio (Virtual Thermal Printer Suite):** Full simulation environment for POS & field Android apps (TechServ, Woosim, Sewoo, Xprinter).
+* 🔘 **Hardware Model Profiles:** Selectable profiles for **Woosim WSP-R241 (58mm)**, **Sewoo LK-P30 (80mm)**, **Sewoo LK-P21 (58mm)**, and **Generic ESC/POS (58mm & 80mm)**.
+* 📄 **Dynamic Paper Width & Auto-Fit:** 1-click paper switching between 58mm (384 dots), 80mm (576 dots), and smart Auto-Fit with clean Thai word/text wrapping (`Wrap Text`).
+* 📶 **Bluetooth Pairing Helper:** Automatic detection and display of PC Bluetooth MAC Address and Hostname with 1-click copy, making discovery effortless when phones show "Unknown Device".
+* ⚡ **Simultaneous Multi-Port Bluetooth Listener:** Simultaneously listens on all incoming Bluetooth serial ports (`COM3`, `COM7`, `COM9`, `COM13`) without manual port guesswork.
+* 🌐 **Cross-Platform Compatibility:** Full native support for Windows, macOS, and Linux (TCP 9100, Bluetooth RFCOMM/cu, system fonts, and OS clipboard).
+* 📋 **1-Click Export:** Save captured receipts directly as PNG, 203 DPI vector PDF, or copy high-res image to the OS clipboard.
+
+### 🐛 Fixed
+* ⌨️ Fixed Windows Tkinter NumLock modifier bug where typing keys triggered Ctrl shortcuts in AxeSQL.
+* 🔌 Fixed `pyserial` module import resolution with automated in-app installer fallback.
+
+---
+
 ## [1.0.4] - 2026-08-23
 
 ### 🌟 Added

@@ -78,7 +78,14 @@ If you prefer running from source code instead of the pre-built binary:
 * Toggle timestamp formatting on/off for clean, distraction-free log copying.
 * Live dynamic metric badges counting total entries, errors (🔴), and warnings (🟡).
 
-### 5. 📲 Companion APK Wireless Mode (No Developer Options)
+### 5. 🖨️ AxePrint Studio 🪓 (Virtual Bluetooth & Network Thermal Printer)
+* Virtual thermal printer simulation for Android POS & field apps (TechServ, Woosim, Sewoo, Xprinter).
+* Selectable printer model profiles: **Woosim WSP-R241 (58mm)**, **Sewoo LK-P30 (80mm)**, **Sewoo LK-P21 (58mm)**, and **Generic ESC/POS (58mm/80mm)**.
+* Multi-channel listeners: **Bluetooth SPP Inbound COM Ports** + **TCP RAW Port 9100 / ADB Forward**.
+* Complete ESC/POS parser with **Thai CP874/TIS-620 Unicode stacking**, `GS v 0` raster bitmaps, QR codes (`GS ( k`), 1D barcodes, and paper cutting (`GS V`).
+* Photorealistic thermal paper canvas with live zoom, receipt history gallery, and 1-click **PNG / PDF / Clipboard** export.
+
+### 6. 📲 Companion APK Wireless Mode (No Developer Options)
 * Stream high-framerate video and audio wirelessly using the companion **`axecast_stream.apk`** without enabling USB debugging.
 
 ### 6. 🌐 In-House Remote Session & Multi-Client Broadcasting
@@ -134,6 +141,8 @@ axecast_studio/
 ├── core/                       # Engine & Core Logic Modules
 │   ├── adb_manager.py          # Android Debug Bridge Controller
 │   ├── mirror_engine.py        # Scrcpy Mirroring & Video Recording Engine
+│   ├── sqlite_engine.py        # SQLite Query, Schema & WAL Flush Engine
+│   ├── thermal_printer_engine.py # Virtual Thermal Printer & ESC/POS Engine
 │   ├── studio_logger.py        # Centralized Studio Event & Diagnostic Logger
 │   ├── auto_discovery.py       # Local Wi-Fi Beacon & Device Auto-Discovery
 │   └── system_detector.py      # Cross-Platform OS & Binary Path Resolver
@@ -141,6 +150,7 @@ axecast_studio/
 │   ├── main_window.py          # Main Application Dashboard
 │   ├── device_card.py          # Per-Device Control & Status Cards
 │   ├── sqlite_studio_dialog.py # AxeSQL Studio Database Manager
+│   ├── thermal_printer_dialog.py # AxePrint Studio Virtual Thermal Printer
 │   ├── logcat_dialog.py        # Android Logcat Studio & Live Filter
 │   ├── file_explorer_view.py   # Device File Explorer & Transfer View
 │   └── modern_context_menu.py  # 2-Block Styled Context Menu

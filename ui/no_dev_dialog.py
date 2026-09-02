@@ -27,7 +27,7 @@ class NoDevDialog(ctk.CTkToplevel):
         self._build_ios_tab(t2)
 
     def _build_apk_tab(self, parent):
-        ctk.CTkLabel(parent, text="📲 Stream Screen via AxeCast APK v1.0.4", font=ctk.CTkFont(size=15, weight="bold")).pack(pady=(8, 4))
+        ctk.CTkLabel(parent, text="📲 Stream Screen via AxeCast APK v1.0.5", font=ctk.CTkFont(size=15, weight="bold")).pack(pady=(8, 4))
         
         guide = (
             "✨ Quick Steps (No Developer Mode Needed / Supports Android 5.0 - 16):\n"

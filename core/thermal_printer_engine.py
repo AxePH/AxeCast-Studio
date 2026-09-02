@@ -305,14 +305,25 @@ class ESCPOSParser:
         raw_bytes = bytes(self._text_buffer)
         self._text_buffer.clear()
         
-        # Decode Thai CP874 / TIS-620 with fallback
+        # 1. Smart Thai & Unicode Decoder
+        # In modern mobile apps (TechServ, Android, React Native, Kotlin), strings are sent as UTF-8.
+        # Check UTF-8 first: strict UTF-8 decoding avoids false positives.
         decoded = ""
-        for enc in (self.encoding, "cp874", "tis-620", "utf-8", "latin1"):
-            try:
-                decoded = raw_bytes.decode(enc)
-                break
-            except Exception:
-                continue
+        try:
+            decoded = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            decoded = ""
+        
+        # 2. If UTF-8 failed, try Thai legacy codepages (CP874, TIS-620, ISO-8859-11)
+        if not decoded:
+            for enc in (self.encoding, "cp874", "tis-620", "iso-8859-11", "windows-874"):
+                try:
+                    decoded = raw_bytes.decode(enc)
+                    break
+                except Exception:
+                    continue
+
+        # 3. Fallback to Latin-1 with replacement
         if not decoded:
             decoded = raw_bytes.decode("latin1", errors="replace")
 
@@ -645,10 +656,11 @@ class ESCPOSParser:
             if self.on_receipt_complete:
                 self.on_receipt_complete(completed)
 
-    def check_timeout_autocut(self, timeout_sec: float = 2.0):
+    def check_timeout_autocut(self, timeout_sec: float = 0.8):
         """If data has stopped arriving and there is uncommitted content, auto-cut."""
         with self._lock:
-            if not self.current_receipt.is_empty() and (time.time() - self._last_data_time > timeout_sec):
+            has_pending = (not self.current_receipt.is_empty()) or (len(self._text_buffer) > 0)
+            if has_pending and (time.time() - self._last_data_time > timeout_sec):
                 self._flush_text()
                 if not self.current_receipt.is_empty():
                     self._emit_cut(cut_type="partial")
@@ -665,27 +677,29 @@ class VirtualReceiptRenderer:
     """
 
     FONT_CANDIDATES = [
-        # Windows
-        "tahoma.ttf", "cordia.ttc", "angsana.ttc", "arial.ttf", "seguisb.ttf", "leelawad.ttf",
-        # macOS
-        "Thonburi.ttc", "SukhumvitSet.ttc", "Ayuthaya.ttf", "Sathu.ttf", "Silom.ttf", "Arial.ttf", "Helvetica.ttc",
-        # Linux
-        "Loma.ttf", "Waree.ttf", "Garuda.ttf", "Norasi.ttf", "Umpush.ttf", "DejaVuSans.ttf", "FreeSans.ttf"
+        # macOS Thai & Receipt Monospace Fonts (Ayuthaya & Tahoma produce the exact authentic thermal look!)
+        "Ayuthaya.ttf", "Tahoma.ttf", "Tahoma Bold.ttf", "Sathu.ttf", "Silom.ttf",
+        "Thonburi.ttc", "SukhumvitSet.ttc", "Krungthep.ttf",
+        # Windows Thai Fonts
+        "tahoma.ttf", "tahomabd.ttf", "leelawad.ttf", "leelawdb.ttf", "Leelawadee.ttf",
+        "cordia.ttc", "cordiab.ttc", "angsana.ttc", "angsanab.ttc", "seguisb.ttf",
+        # Linux Thai Fonts
+        "Loma.ttf", "Loma-Bold.ttf", "Waree.ttf", "Garuda.ttf", "Norasi.ttf", "Umpush.ttf", "DejaVuSans.ttf"
     ]
 
     FONT_DIRS = [
-        # Windows
-        os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"),
-        # macOS
-        "/System/Library/Fonts",
+        # macOS (Supplemental holds all Thai fonts including Ayuthaya on modern macOS!)
         "/System/Library/Fonts/Supplemental",
         "/Library/Fonts",
         os.path.expanduser("~/Library/Fonts"),
+        "/System/Library/Fonts",
+        # Windows
+        os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts"),
         # Linux
-        "/usr/share/fonts",
+        "/usr/share/fonts/truetype/tlwg",
         "/usr/share/fonts/truetype",
         "/usr/share/fonts/opentype",
-        "/usr/share/fonts/truetype/tlwg",
+        "/usr/share/fonts",
         "/usr/local/share/fonts",
         os.path.expanduser("~/.fonts")
     ]
@@ -693,14 +707,35 @@ class VirtualReceiptRenderer:
     @classmethod
     def get_thai_font(cls, size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
         """Finds best available TrueType font supporting Thai & Unicode across Windows, macOS, and Linux."""
+        test_char = "ก"
+        dummy_draw = ImageDraw.Draw(Image.new("L", (1, 1)))
+
         for font_dir in cls.FONT_DIRS:
             if not os.path.exists(font_dir):
                 continue
             for font_name in cls.FONT_CANDIDATES:
+                if bold:
+                    # Prefer bold variant if present
+                    name_lower = font_name.lower()
+                    if "bold" not in name_lower and "bd" not in name_lower:
+                        bold_cand = font_name.replace(".ttf", " Bold.ttf").replace(".ttf", "bd.ttf")
+                        bold_path = os.path.join(font_dir, bold_cand)
+                        if os.path.exists(bold_path):
+                            try:
+                                f = ImageFont.truetype(bold_path, size)
+                                bbox = dummy_draw.textbbox((0, 0), test_char, font=f)
+                                if bbox[2] - bbox[0] > 0:
+                                    return f
+                            except Exception:
+                                pass
                 full_path = os.path.join(font_dir, font_name)
                 if os.path.exists(full_path):
                     try:
-                        return ImageFont.truetype(full_path, size)
+                        font = ImageFont.truetype(full_path, size)
+                        # Verify that this font actually renders Thai characters properly (not empty tofu boxes)
+                        bbox = dummy_draw.textbbox((0, 0), test_char, font=font)
+                        if bbox[2] - bbox[0] > 0:
+                            return font
                     except Exception:
                         continue
         
@@ -712,13 +747,14 @@ class VirtualReceiptRenderer:
 
     @classmethod
     def _wrap_text(cls, text: str, font, max_w: int, draw: ImageDraw.Draw) -> List[str]:
-        """Wraps text so it does not overflow the thermal paper width."""
+        """Wraps text cleanly without splitting Thai consonants from vowels/tone marks."""
+        THAI_COMBINING = set('\u0e31\u0e34\u0e35\u0e36\u0e37\u0e38\u0e39\u0e3a\u0e47\u0e48\u0e49\u0e4a\u0e4b\u0e4c\u0e4d\u0e4e')
         lines = []
         cur = ""
         for ch in text:
             test = cur + ch
             bbox = draw.textbbox((0, 0), test, font=font)
-            if bbox[2] - bbox[0] > max_w and cur:
+            if bbox[2] - bbox[0] > max_w and cur and ch not in THAI_COMBINING:
                 lines.append(cur)
                 cur = ch
             else:
@@ -1177,6 +1213,9 @@ class SerialPrinterListener:
                     time.sleep(1.0)
             finally:
                 if ser:
+                    self.parser._flush_text()
+                    if not self.parser.current_receipt.is_empty():
+                        self.parser._emit_cut(cut_type="partial")
                     with self._lock:
                         if ser in self._serials:
                             self._serials.remove(ser)

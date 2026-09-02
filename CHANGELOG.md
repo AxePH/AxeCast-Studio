@@ -4,6 +4,17 @@ All notable changes to **AxeCast Studio** are documented in this file.
 
 ---
 
+## [1.0.6] - 2026-09-02
+
+### 🌟 Improved & Fixed (AxePrint Studio)
+* 🇹🇭 **Authentic Thai Thermal Receipt Typography:** Prioritized genuine Thai receipt fonts (`Ayuthaya.ttf`, `Tahoma.ttf`) located in `/System/Library/Fonts/Supplemental` on macOS and `C:\Windows\Fonts` on Windows. Solved missing Thai glyph tofu boxes `[][][][][]` caused by non-Thai font fallbacks.
+* 🔠 **Smart Dual-Layer Encoding Detection (UTF-8 & CP874/TIS-620):** Auto-detects modern mobile app UTF-8 print streams (such as TechServ Android / React Native) with fallback to legacy ESC/POS CP874 & TIS-620 codepages.
+* ✂️ **Smart Auto-Cut on Silence (0.8s):** Built-in auto-cut for mobile/portable thermal printers lacking automatic cutters (such as Sewoo LK-P30, Woosim WSP-R241). Automatically commits and displays receipts upon print completion or Bluetooth disconnection.
+* ⏱️ **UI Background Auto-Cut Polling Loop:** Ensures all pending print buffer text is promptly flushed and rendered onto the virtual receipt canvas without stalling.
+* ✍️ **Thai Combining Marks Protection:** Text wrapping engine prevents Thai vowels and tone marks (`่`, `้`, `๊`, `๋`, `ั`, `ิ`, `ี`, `ุ`, `ู`) from detaching onto subsequent lines.
+
+---
+
 ## [1.0.5] - 2026-09-02
 
 ### 🌟 Added

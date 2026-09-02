@@ -63,6 +63,9 @@ class ThermalPrinterDialog(ctk.CTkToplevel):
         # Refresh COM ports
         self.after(200, self._refresh_com_ports)
 
+        # Periodic check for completed print jobs
+        self.after(500, self._autocut_poll_loop)
+
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _setup_theme(self):
@@ -801,6 +804,15 @@ class ThermalPrinterDialog(ctk.CTkToplevel):
                 return f"{num:.1f} {unit}" if unit != "B" else f"{num} B"
             num /= 1024.0
         return f"{num:.1f} GB"
+
+    def _autocut_poll_loop(self):
+        try:
+            if not self.winfo_exists():
+                return
+            self.parser.check_timeout_autocut(timeout_sec=0.8)
+        except Exception:
+            pass
+        self.after(500, self._autocut_poll_loop)
 
     def _on_close(self):
         self._stop_listeners()

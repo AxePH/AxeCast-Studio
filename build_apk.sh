@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # AxeCast Stream - Fast Local Android APK Builder
-# Builds AxeCast-Stream-v1.0.5.apk
+# Builds AxeCast-Stream-v1.0.6.apk
 # ============================================================
 
 set -e
@@ -33,16 +33,16 @@ if [ -f "mobile/android/gradlew" ]; then
     cd mobile/android
     ./gradlew assembleRelease --quiet
     cd "$DIR"
-    cp mobile/android/app/build/outputs/apk/release/app-release.apk release/AxeCast-Stream-v1.0.5.apk
-    cp release/AxeCast-Stream-v1.0.5.apk axecast_stream.apk
+    cp mobile/android/app/build/outputs/apk/release/app-release.apk release/AxeCast-Stream-v1.0.6.apk
+    cp release/AxeCast-Stream-v1.0.6.apk axecast_stream.apk
 else
     echo "📦 Packaging existing AxeCast APK as release..."
-    cp axecast_stream.apk release/AxeCast-Stream-v1.0.5.apk
+    cp axecast_stream.apk release/AxeCast-Stream-v1.0.6.apk
 fi
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✅ Build Complete! APK generated at:"
-echo "   📂 release/AxeCast-Stream-v1.0.5.apk"
+echo "   📂 release/AxeCast-Stream-v1.0.6.apk"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 # Auto install to connected Android device via ADB
@@ -51,10 +51,10 @@ if command -v adb >/dev/null 2>&1; then
     if [ -n "$DEVICES" ]; then
         for DEV_SERIAL in $DEVICES; do
             echo "📲 Installing APK to device ($DEV_SERIAL)..."
-            if ! adb -s "$DEV_SERIAL" install -r release/AxeCast-Stream-v1.0.5.apk; then
+            if ! adb -s "$DEV_SERIAL" install -r release/AxeCast-Stream-v1.0.6.apk; then
                 echo "⚠️ Performing clean reinstall on $DEV_SERIAL..."
                 adb -s "$DEV_SERIAL" uninstall com.axecast.stream >/dev/null 2>&1 || true
-                adb -s "$DEV_SERIAL" install release/AxeCast-Stream-v1.0.5.apk
+                adb -s "$DEV_SERIAL" install release/AxeCast-Stream-v1.0.6.apk
             fi
             echo "🚀 Launching AxeCast Stream on $DEV_SERIAL..."
             adb -s "$DEV_SERIAL" shell am start -n com.axecast.stream/.MainActivity >/dev/null 2>&1 || true

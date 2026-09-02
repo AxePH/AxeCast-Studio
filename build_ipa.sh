@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 # AxeCast Stream - Fast Local iOS IPA Builder
-# Builds AxeCast-Stream-v1.0.5.ipa on macOS
+# Builds AxeCast-Stream-v1.0.6.ipa on macOS
 # ============================================================
 
 set -e
@@ -28,7 +28,7 @@ if command -v xcodebuild &>/dev/null && [ -d "mobile/ios" ]; then
     fi
     
     cd build
-    zip -qr ../release/AxeCast-Stream-v1.0.5.ipa Payload
+    zip -qr ../release/AxeCast-Stream-v1.0.6.ipa Payload
     cd "$DIR"
     rm -rf build/Payload
 else
@@ -37,5 +37,5 @@ fi
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✅ Build Complete! IPA generated at:"
-echo "   📂 release/AxeCast-Stream-v1.0.5.ipa"
+echo "   📂 release/AxeCast-Stream-v1.0.6.ipa"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

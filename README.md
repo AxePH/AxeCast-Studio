@@ -19,8 +19,8 @@
 | 🪟 **Windows** (x64) | [`AxeCast-Studio-Windows-x64.zip`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Extract ZIP → double-click `AxeCast-Studio.exe` |
 | 🍎 **macOS** (ARM64 / Intel) | [`AxeCast-Studio-macOS-arm64.zip`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Extract → move to `Applications` → open `AxeCast-Studio.app` |
 | 🐧 **Linux** (x64) | [`AxeCast-Studio-Linux-x64.tar.gz`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Extract → run `./run.sh` |
-| 🤖 **Android APK** | [`AxeCast-Stream-v1.0.5.apk`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Install on Android for wireless & remote streaming |
-| 🍏 **iOS IPA** | [`AxeCast-Stream-v1.0.5.ipa`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Install on iPhone / iPad for ReplayKit streaming |
+| 🤖 **Android APK** | [`AxeCast-Stream-v1.0.6.apk`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Install on Android for wireless & remote streaming |
+| 🍏 **iOS IPA** | [`AxeCast-Stream-v1.0.6.ipa`](https://github.com/AxePH/AxeCast-Studio/releases/latest) | Install on iPhone / iPad for ReplayKit streaming |
 
 ### 🍎 macOS First-Time Launch & Security Notice (Gatekeeper):
 
